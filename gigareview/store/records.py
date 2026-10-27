@@ -72,6 +72,7 @@ class RunRecord:
     started_at: datetime | None
     finished_at: datetime | None
     dry_run: bool
+    published: bool = False
 
     @classmethod
     def from_row(cls, row: sqlite3.Row | Mapping[str, Any]) -> Self:
@@ -80,6 +81,7 @@ class RunRecord:
         fields["trigger"] = Trigger(fields["trigger"])
         fields["status"] = RunStatus(fields["status"])
         fields["dry_run"] = bool(fields["dry_run"])
+        fields["published"] = bool(fields.get("published"))
         for stamp in ("created_at", "started_at", "finished_at"):
             fields[stamp] = _parse_time(fields[stamp])
         return cls(**fields)

@@ -165,6 +165,23 @@ def test_resolve_task_retries_on_conflict() -> None:
     assert recorder.bodies()[2] == {"version": 7, "state": "RESOLVED"}
 
 
+def test_update_comment_retries_on_conflict() -> None:
+    def responder(request: httpx.Request) -> httpx.Response:
+        if request.method == "GET":
+            return httpx.Response(200, json={"id": 5, "version": 4})
+        if json.loads(request.content)["version"] == 1:
+            return httpx.Response(409, text="stale")
+        return httpx.Response(200, json={"id": 5, "version": 5, "text": "new"})
+
+    comment, recorder = _run(
+        responder,
+        lambda client: client.update_comment(make_pr(), 5, 1, "new"),
+    )
+    assert (comment.version, comment.text) == (5, "new")
+    assert [request.method for request in recorder.requests] == ["PUT", "GET", "PUT"]
+    assert recorder.bodies()[2] == {"version": 4, "text": "new"}
+
+
 def test_resolve_task_other_error_propagates() -> None:
     with pytest.raises(BitbucketError) as caught:
         _run(

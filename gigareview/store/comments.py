@@ -22,15 +22,29 @@ class CommentRepository:
         kind: CommentKind,
         scenario: str = "",
         details: TaskDetails | None = None,
-    ) -> None:
-        """Запоминает опубликованный комментарий прогона ``run_id`` (у таски — с текстом)."""
+    ) -> int:
+        """Запоминает опубликованный комментарий прогона ``run_id``; возвращает номер записи."""
         task = details or TaskDetails("")
-        self._db.execute(
+        cursor = self._db.execute(
             "INSERT INTO bb_comments (run_id, project, repo, pr_id, comment_id, version, kind, "
             "scenario, text, path, line) "
             "SELECT id, project, repo, pr_id, ?, ?, ?, ?, ?, ?, ? FROM runs WHERE id = ?",
             (comment_id, version, kind.value, scenario, task.text, task.path, task.line, run_id),
         )
+        return int(cursor.lastrowid or 0)
+
+    def latest_summary(self, project: str, repo: str, pr_id: int) -> CommentRecord | None:
+        """Статусный комментарий PR последнего прогона (его обновляют следующие прогоны)."""
+        row = self._db.execute(
+            "SELECT * FROM bb_comments WHERE project = ? AND repo = ? AND pr_id = ? "
+            "AND kind = ? ORDER BY id DESC LIMIT 1",
+            (project, repo, pr_id, CommentKind.SUMMARY.value),
+        ).fetchone()
+        return None if row is None else _record(row)
+
+    def set_version(self, record_id: int, version: int) -> None:
+        """Комментарий изменён: новая версия в Bitbucket."""
+        self._db.execute("UPDATE bb_comments SET version = ? WHERE id = ?", (version, record_id))
 
     def open_tasks(
         self,

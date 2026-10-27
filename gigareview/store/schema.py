@@ -78,11 +78,15 @@ CREATE TABLE daemon_state (
 """
 
 # Текст и привязка таски: инкрементальный сценарий получает открытые таски прошлых прогонов.
-_TASK_DETAILS = """
+# published — итоги прогона опубликованы целиком (статусный комментарий появляется раньше).
+_REVIEW_STATE = """
 ALTER TABLE bb_comments ADD COLUMN text TEXT NOT NULL DEFAULT '';
 ALTER TABLE bb_comments ADD COLUMN path TEXT;
 ALTER TABLE bb_comments ADD COLUMN line INTEGER;
+ALTER TABLE runs ADD COLUMN published INTEGER NOT NULL DEFAULT 0;
+UPDATE runs SET published = 1
+    WHERE id IN (SELECT run_id FROM bb_comments WHERE kind = 'summary');
 """
 
 #: Миграции по порядку: i-я переводит базу с версии i на i + 1.
-MIGRATIONS: tuple[str, ...] = (_INITIAL, _TASK_DETAILS)
+MIGRATIONS: tuple[str, ...] = (_INITIAL, _REVIEW_STATE)

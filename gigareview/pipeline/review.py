@@ -1,16 +1,18 @@
 """Прогон ревью одного коммита PR от подготовки копии до публикации итогов."""
 
 import asyncio
-import dataclasses
 import tempfile
 from collections.abc import Sequence
+from dataclasses import dataclass, field, replace
+from itertools import chain
 from pathlib import Path
 
 from gigareview.bitbucket import BitbucketApi, PullRequest
-from gigareview.config import Config, RepoConfig, Scenario
+from gigareview.config import Config, RepoConfig, Scenario, ScenarioKind
 from gigareview.errors import GigaReviewError, SetupError
 from gigareview.pipeline.incremental import history_env, scenario_history, settle
 from gigareview.pipeline.publish import Publisher
+from gigareview.pipeline.status import StatusBoard
 from gigareview.pipeline.workspace import Workspace, prepare_workspace, scenario_env
 from gigareview.process import subprocess_env
 from gigareview.scenarios import ScenarioContext, ScenarioReport, overall_status, run_scenario
@@ -18,6 +20,9 @@ from gigareview.statuses import EventLevel, RunStatus, Trigger
 from gigareview.store import NewRun, RunRecord, ScenarioRecord, Store
 
 __all__ = ["Reviewer", "new_run"]
+
+_DRY_RUN_NOTE = "Сухой режим: в Bitbucket ничего не опубликовано"
+_CHANGED_NOTE = "PR изменился во время прогона: результаты не опубликованы"
 
 
 def new_run(pr: PullRequest, trigger: Trigger, *, fingerprint: str, dry_run: bool) -> NewRun:
@@ -70,50 +75,80 @@ class Reviewer:
         repo = self.config.find_repo(pr.project, pr.repo)
         if run is None or repo is None:
             raise SetupError(f"Репозиторий {pr.project}/{pr.repo} не описан в конфигурации")
-        scenarios = self.config.scenarios_for(repo)
-        if not scenarios:
+        phases = _phases(self.config.scenarios_for(repo))
+        if not phases:
             raise SetupError(f"Для {repo.key} не задано ни одного сценария")
-        reports = await self._run_scenarios(run_id, repo, pr, scenarios)
-        status = overall_status(reports)
-        return status, await self._publish(run, pr, reports, status)
+        if not run.dry_run:
+            # Пользователь нужен для статуса ревью: если его не определить, лучше упасть
+            # до публикации, чем оставить таски без статуса и повторить их следующим прогоном.
+            await self._api.current_slug()
+        base_url = self.config.dashboard.base_url
+        run_url = f"{base_url}/runs/{run.id}"
+        board = StatusBoard(self._api, self._store, run, run_url, enabled=not run.dry_run)
+        progress = _Progress(run, pr, board)
+        # Сообщение — сразу, до подготовки копии: долгие ИИ-сценарии не должны выглядеть
+        # так, будто PR никто не проверяет.
+        await board.show(pr, (), pending=tuple(chain.from_iterable(phases)))
+        try:
+            note = await self._run_phases(progress, repo, phases)
+        except Exception:
+            await board.fail(pr)
+            raise
+        return overall_status(progress.reports), note
 
-    async def _run_scenarios(
+    async def _run_phases(
         self,
-        run_id: int,
+        progress: "_Progress",
         repo: RepoConfig,
-        pr: PullRequest,
-        scenarios: Sequence[Scenario],
-    ) -> list[ScenarioReport]:
-        """Готовит копию PR и выполняет сценарии по порядку, сохраняя каждый результат."""
+        phases: Sequence[tuple[Scenario, ...]],
+    ) -> str:
+        """Готовит копию PR и выполняет этапы по порядку; возвращает примечание прогона."""
         env = subprocess_env({}, hidden=(self.config.bitbucket.token_env,))
-        workspace = await self._prepare(run_id, repo, pr, env)
+        workspace = await self._prepare(progress.run.id, repo, progress.pr, env)
         artifacts_root = self.config.daemon.home / "artifacts"
         artifacts_root.mkdir(parents=True, exist_ok=True)
+        run_id = progress.run.id
         prefix = f"run-{run_id}-"
         with tempfile.TemporaryDirectory(prefix=prefix, dir=artifacts_root) as artifacts_dir:
             artifacts = Path(artifacts_dir)
             context = ScenarioContext(
                 workspace.repo_dir,
                 artifacts,
-                {**env, **scenario_env(pr, workspace, artifacts)},
+                {**env, **scenario_env(progress.pr, workspace, artifacts)},
             )
-            return await self._execute(run_id, pr, scenarios, context)
+            return await self._run_all(progress, phases, context)
 
-    async def _execute(
+    async def _run_all(
         self,
-        run_id: int,
-        pr: PullRequest,
-        scenarios: Sequence[Scenario],
+        progress: "_Progress",
+        phases: Sequence[tuple[Scenario, ...]],
         context: ScenarioContext,
-    ) -> list[ScenarioReport]:
-        """Сценарии по порядку; результат каждого сохраняется сразу — его видно в WD."""
-        reports = []
-        for position, scenario in enumerate(scenarios):
-            # Сценарии идут строго по очереди: они делят одну рабочую копию.
-            report = await self._run_one(pr, scenario, context)  # noqa: WPS476
-            self._store.runs.add_scenario(run_id, position, _record(report))
-            reports.append(report)
-        return reports
+    ) -> str:
+        """Этапы по порядку; PR изменился — оставшиеся этапы не выполняются."""
+        for index, phase in enumerate(phases):
+            pending = tuple(chain.from_iterable(phases[index + 1 :]))
+            # Этапы идут строго по очереди: сценарии делят одну рабочую копию.
+            note = await self._phase(progress, phase, pending, context)  # noqa: WPS476
+            if note:
+                return note
+        return _DRY_RUN_NOTE if progress.run.dry_run else ""
+
+    async def _phase(
+        self,
+        progress: "_Progress",
+        scenarios: Sequence[Scenario],
+        pending: Sequence[Scenario],
+        context: ScenarioContext,
+    ) -> str:
+        """Этап: сценарии по порядку (каждый результат сохраняется сразу), затем публикация."""
+        phase_reports = []
+        for scenario in scenarios:
+            report = await self._run_one(progress.pr, scenario, context)  # noqa: WPS476
+            position = len(progress.reports)
+            self._store.runs.add_scenario(progress.run.id, position, _record(report))
+            progress.reports.append(report)
+            phase_reports.append(report)
+        return await self._publish(progress, phase_reports, pending)
 
     async def _run_one(
         self,
@@ -124,7 +159,7 @@ class Reviewer:
         """Сценарий с историей его прошлых ревью PR (коммит, открытые таски)."""
         history = await scenario_history(self._store, pr, scenario, context.repo_dir)
         env = {**context.env, **history_env(history, context.artifacts, scenario)}
-        report = await run_scenario(scenario, dataclasses.replace(context, env=env))
+        report = await run_scenario(scenario, replace(context, env=env))
         return settle(report, history)
 
     async def _prepare(
@@ -145,22 +180,31 @@ class Reviewer:
 
     async def _publish(
         self,
-        run: RunRecord,
-        pr: PullRequest,
-        reports: list[ScenarioReport],
-        status: RunStatus,
+        progress: "_Progress",
+        phase_reports: Sequence[ScenarioReport],
+        pending: Sequence[Scenario],
     ) -> str:
-        """Публикует итоги, если PR всё ещё открыт на том же коммите; иначе — примечание."""
+        """Таски этапа и статусный комментарий; после последнего этапа — статус ревью.
+
+        Публикуется, только пока PR открыт на том же коммите; иначе — примечание, и
+        оставшиеся этапы не выполняются: новый коммит проверит следующий прогон.
+        """
+        run, pr = progress.run, progress.pr
         if run.dry_run:
-            return "Сухой режим: в Bitbucket ничего не опубликовано"
+            return ""
         fresh = await self._api.get_pull_request(pr.project, pr.repo, pr.id)
         if fresh.state != "OPEN" or fresh.commit != pr.commit:
-            note = "PR изменился во время прогона: результаты не опубликованы"
+            note = _CHANGED_NOTE
+            if pending:
+                note = f"{note}, оставшиеся сценарии не запускались"
             self._event(EventLevel.WARNING, f"{_pr_label(pr)}: {note}", run.id)
             return note
-        base_url = self.config.dashboard.base_url
-        run_url = f"{base_url}/runs/{run.id}"
-        await Publisher(self._api, self._store, run.id).publish(fresh, reports, status, run_url)
+        publisher = Publisher(self._api, self._store, run.id)
+        await publisher.publish_tasks(fresh, phase_reports)
+        await progress.board.show(fresh, progress.reports, pending)
+        if not pending:
+            await publisher.finish(fresh, progress.reports, overall_status(progress.reports))
+            self._store.runs.mark_published(run.id)
         return ""
 
     def _crashed(self, run_id: int, error: str) -> RunStatus:
@@ -171,6 +215,23 @@ class Reviewer:
 
     def _event(self, level: EventLevel, message: str, run_id: int) -> None:
         self._store.events.add(level, message, run_id)
+
+
+@dataclass(slots=True)
+class _Progress:
+    """Ход прогона: запись, PR, статусный комментарий и итоги выполненных сценариев."""
+
+    run: RunRecord
+    pr: PullRequest
+    board: StatusBoard
+    reports: list[ScenarioReport] = field(default_factory=list)
+
+
+def _phases(scenarios: Sequence[Scenario]) -> list[tuple[Scenario, ...]]:
+    """Этапы прогона: сначала обычные сценарии, затем долгие ИИ-сценарии."""
+    simple = tuple(scenario for scenario in scenarios if scenario.kind is ScenarioKind.SIMPLE)
+    smart = tuple(scenario for scenario in scenarios if scenario.kind is ScenarioKind.AI)
+    return [phase for phase in (simple, smart) if phase]
 
 
 def _pr_label(pr: PullRequest) -> str:

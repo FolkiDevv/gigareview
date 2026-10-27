@@ -112,7 +112,7 @@ def test_scenario_errors_do_not_change_review(tmp_path: Path, store: Store, orig
     run, api = _review(tmp_path, store, origin, scenarios={"lint": {"run": "exit 2"}})
     assert run.status is RunStatus.FAILED
     assert api.statuses == []
-    assert "ошибка сценария" in api.summaries[0].text
+    assert "проверка не удалась (подробности — в gigareview)" in api.summaries[0].text
 
 
 def test_unknown_user_fails_before_publishing(
@@ -145,7 +145,10 @@ def test_pr_changed_during_run_is_not_published(
     run, api = _review(tmp_path, store, origin, api=api)
     assert run.status is RunStatus.PASSED
     assert "не опубликованы" in run.error
-    assert api.comments == []
+    assert api.tasks == []
+    assert api.statuses == []
+    assert "⏳ проверки начаты" in api.summaries[0].text
+    assert not run.published
 
 
 def test_scenario_environment(
@@ -176,7 +179,9 @@ def test_init_runs_and_failure_is_error(tmp_path: Path, store: Store, origin: Or
     assert run.status is RunStatus.ERROR
     assert "init" in run.error
     assert "broken" in run.setup_log
-    assert api.comments == []
+    assert api.tasks == []
+    assert "прогон не удался" in api.summaries[-1].text
+    assert len(api.summaries) == 1
     assert "упал" in store.events.list(EventLevel.ERROR)[0].message
 
 
@@ -354,3 +359,86 @@ def test_sample_ai_review_with_fake_gigacrew(
     assert task.anchor is not None
     assert (task.anchor.path, task.anchor.line) == ("app.py", 1)
     assert "к публикации: 1" in records[0].validate_output
+
+
+def _ai(run: str) -> dict[str, Any]:
+    return {"kind": "ai", "run": run}
+
+
+def test_status_comment_follows_phases(tmp_path: Path, store: Store, origin: Origin) -> None:
+    scenarios = {
+        "smart": _ai('test -n "$(cat "$GR_OPEN_TASKS")" && echo \'[{"text": "ai"}]\'; exit 1'),
+        "lint": {"run": "echo bad; exit 1"},
+    }
+    run, api = _review(tmp_path, store, origin, scenarios=scenarios)
+    assert run.status is RunStatus.ISSUES
+    assert [record.name for record in store.runs.scenarios(run.id)] == ["lint", "smart"]
+    started, simple_done, finished = api.status_texts
+    assert "⏳ проверки начаты" in started
+    assert started.count("⏳ ожидает") == 2
+    assert "| lint | ❌ замечания: 1 |" in simple_done
+    assert "| smart | ⏳ ожидает |" in simple_done
+    assert "идут ИИ-сценарии" in simple_done
+    assert "| smart | ❌ замечания: 1 |" in finished
+    assert "нужны изменения" in finished
+    assert len(api.summaries) == 1
+    assert api.statuses == [(1, ReviewStatus.NEEDS_WORK)]
+    simple_task, ai_task = api.tasks
+    assert "bad" in simple_task.text
+    assert ai_task.text.endswith("ai")
+    assert run.published
+
+
+def test_new_commit_updates_same_status_comment(
+    tmp_path: Path,
+    store: Store,
+    origin: Origin,
+) -> None:
+    _, api = _review(tmp_path, store, origin)
+    second = _push(origin, "print('v2')\n")
+    api.prs = [make_pr(commit=second)]
+    _, api = _review(tmp_path, store, origin, api=api, commit=second)
+    assert len(api.summaries) == 1
+    assert second[:10] in api.summaries[0].text
+    assert "⏳ проверки начаты" in api.status_texts[2]
+    assert second[:10] in api.status_texts[2]
+    status_id = api.summaries[0].id
+    assert api.edits == [status_id, status_id, status_id]
+
+
+def test_deleted_status_comment_is_posted_again(
+    tmp_path: Path,
+    store: Store,
+    origin: Origin,
+) -> None:
+    _, api = _review(tmp_path, store, origin)
+    api.comments.clear()
+    run, api = _review(tmp_path, store, origin, api=api)
+    assert run.status is RunStatus.PASSED
+    assert len(api.summaries) == 1
+    assert "PR одобрен" in api.summaries[0].text
+
+
+def test_status_comment_error_is_run_error(
+    tmp_path: Path,
+    store: Store,
+    origin: Origin,
+) -> None:
+    _, api = _review(tmp_path, store, origin)
+    api.update_error = BitbucketError("denied", status_code=403)
+    run, _ = _review(tmp_path, store, origin, api=api)
+    assert run.status is RunStatus.ERROR
+    assert "denied" in run.error
+
+
+def test_pr_changed_after_simple_phase_skips_ai(
+    tmp_path: Path,
+    store: Store,
+    origin: Origin,
+) -> None:
+    api = FakeBitbucket(overrides={1: make_pr(commit="newer")})
+    scenarios = {"lint": {"run": "true"}, "smart": _ai("echo '[]'")}
+    run, api = _review(tmp_path, store, origin, api=api, scenarios=scenarios)
+    assert "оставшиеся сценарии не запускались" in run.error
+    assert [record.name for record in store.runs.scenarios(run.id)] == ["lint"]
+    assert api.statuses == []

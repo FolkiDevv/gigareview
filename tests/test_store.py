@@ -213,7 +213,7 @@ def _reviewed(store: Store, commit: str, outcome: Outcome, *, published: bool = 
     run_id = store.runs.create(_new(commit=commit))
     store.runs.add_scenario(run_id, 0, _scenario("ai", outcome))
     if published:
-        store.comments.add(run_id, 1, 0, CommentKind.SUMMARY)
+        store.runs.mark_published(run_id)
 
 
 def test_last_reviewed_commit(store: Store) -> None:
@@ -231,11 +231,32 @@ def test_last_reviewed_commit(store: Store) -> None:
     assert last(scenario="lint") is None
 
 
-def test_migration_adds_task_details(tmp_path: Path) -> None:
+def test_migration_adds_task_details_and_published(tmp_path: Path) -> None:
     path = tmp_path / "old.sqlite3"
     with closing(sqlite3.connect(path)) as old:
-        old.executescript(f"{MIGRATIONS[0]}\nPRAGMA user_version = 1;")
+        old.executescript(
+            f"{MIGRATIONS[0]}\n"
+            "INSERT INTO runs (project, repo, pr_id, source_branch, target_branch, commit_id, "
+            "trigger, status, created_at) VALUES "
+            "('PROJ', 'repo', 1, 'f', 'm', 'a', 'auto', 'passed', '2026-01-01T00:00:00+00:00'), "
+            "('PROJ', 'repo', 1, 'f', 'm', 'b', 'auto', 'passed', '2026-01-01T00:00:00+00:00');\n"
+            "INSERT INTO bb_comments (run_id, project, repo, pr_id, comment_id, version, kind) "
+            "VALUES (1, 'PROJ', 'repo', 1, 4, 0, 'summary');\n"
+            "PRAGMA user_version = 1;",
+        )
     with Store(path) as store:
-        run_id = store.runs.create(_new())
-        store.comments.add(run_id, 5, 0, CommentKind.TASK, "ai", TaskDetails("t", None, 2))
+        published = store.runs.get(1)
+        unpublished = store.runs.get(2)
+        assert published is not None
+        assert unpublished is not None
+        assert published.published
+        assert not unpublished.published
+        store.comments.add(1, 5, 0, CommentKind.TASK, "ai", TaskDetails("t", None, 2))
         assert store.comments.open_tasks("PROJ", "repo", 1)[0].details.line == 2
+        summary = store.comments.latest_summary("PROJ", "repo", 1)
+        assert summary is not None
+        assert summary.comment_id == 4
+        store.comments.set_version(summary.id, 3)
+        refreshed = store.comments.latest_summary("PROJ", "repo", 1)
+        assert refreshed is not None
+        assert refreshed.version == 3

@@ -17,6 +17,7 @@ from gigareview.scenarios import (
     task_text,
 )
 from gigareview.scenarios import report as report_module
+from gigareview.scenarios.report import crash_text
 from gigareview.scenarios.tasks import parse_review
 from gigareview.statuses import Outcome, RunStatus
 
@@ -211,10 +212,25 @@ def test_summary_text() -> None:
     assert "`0123456789`" in text
     assert "| Проверка | ✅ пройден |" in text
     assert "❌ замечания: 2" in text
-    assert r"bad \| thing here" in text
+    assert "| Проверка | ⚠️ проверка не удалась (подробности — в gigareview) |" in text
+    assert "bad" not in text
     assert "нужны изменения" in text
     assert "(http://x/runs/1)" in text
     assert "Подробности" not in summary_text(reports, commit="c", run_url="")
+
+
+def test_summary_text_pending_and_crash() -> None:
+    scenario = _scenario(run="x", kind="ai", title="ИИ")
+    started = summary_text([], commit="c", run_url="", pending=[scenario])
+    assert "| ИИ | ⏳ ожидает |" in started
+    assert "проверки начаты" in started
+    partial = summary_text([_report(Outcome.PASSED)], commit="c", run_url="", pending=[scenario])
+    assert "| Проверка | ✅ пройден |" in partial
+    assert "идут ИИ-сценарии" in partial
+    crashed = crash_text(commit="0123456789abc", run_url="http://x/runs/2")
+    assert "прогон не удался" in crashed
+    assert "`0123456789`" in crashed
+    assert "(http://x/runs/2)" in crashed
 
 
 def test_incremental_scenario_reads_resolved_without_issues(tmp_path: Path) -> None:

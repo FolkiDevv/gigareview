@@ -5,13 +5,7 @@ from dataclasses import asdict
 
 from gigareview.statuses import Outcome, RunStatus
 from gigareview.store.clock import stamp
-from gigareview.store.records import (
-    TASK_SEPARATOR,
-    CommentKind,
-    NewRun,
-    RunRecord,
-    ScenarioRecord,
-)
+from gigareview.store.records import TASK_SEPARATOR, NewRun, RunRecord, ScenarioRecord
 
 __all__ = ["RunRepository"]
 
@@ -129,17 +123,16 @@ class RunRepository:
     ) -> str | None:
         """Последний коммит PR (не ``other_than``), чьё ревью сценарием попало в Bitbucket.
 
-        Считаются только опубликованные прогоны (есть итоговый комментарий: не сухой режим
-        и не «PR изменился во время прогона»), где сценарий отработал без ошибки.
+        Считаются только прогоны, опубликованные целиком (не сухой режим и не «PR изменился
+        во время прогона»), где сценарий отработал без ошибки.
         """
         row = self._db.execute(
             "SELECT runs.commit_id FROM runs "
             "JOIN scenario_results ON scenario_results.run_id = runs.id "
             "WHERE runs.project = ? AND runs.repo = ? AND runs.pr_id = ? "
             "AND runs.commit_id != ? AND scenario_results.name = ? "
-            "AND scenario_results.outcome IN (?, ?) AND EXISTS ("
-            "SELECT 1 FROM bb_comments WHERE bb_comments.run_id = runs.id "
-            "AND bb_comments.kind = ?) ORDER BY runs.id DESC LIMIT 1",
+            "AND scenario_results.outcome IN (?, ?) AND runs.published = 1 "
+            "ORDER BY runs.id DESC LIMIT 1",
             (
                 project,
                 repo,
@@ -148,10 +141,13 @@ class RunRepository:
                 scenario,
                 Outcome.PASSED.value,
                 Outcome.ISSUES.value,
-                CommentKind.SUMMARY.value,
             ),
         ).fetchone()
         return None if row is None else str(row["commit_id"])
+
+    def mark_published(self, run_id: int) -> None:
+        """Итоги прогона (таски, статусный комментарий, статус ревью) опубликованы целиком."""
+        self._db.execute("UPDATE runs SET published = 1 WHERE id = ?", (run_id,))
 
     def interrupt_active(self) -> int:
         """Прогоны, оставшиеся ``queued``/``running`` от прошлого запуска, — ``interrupted``."""
