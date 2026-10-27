@@ -6,7 +6,7 @@
 <section class="head"><h1>Pull requests</h1></section>
 <div class="table-wrap">
 <table class="grid">
-  <thead><tr><th>PR</th><th>Автор</th><th>Последний прогон</th><th>Статус</th><th>Прогонов</th><th></th></tr></thead>
+  <thead><tr><th>PR</th><th>Author</th><th>Last run</th><th>Status</th><th>Runs</th><th></th></tr></thead>
   <tbody>
   {% for summary in prs %}
     {% set run = summary.last_run %}
@@ -19,10 +19,10 @@
       <td><a href="/runs/{{ run.id }}">#{{ run.id }}</a> <span class="muted">{{ run.created_at | when }}</span></td>
       <td>{{ badge(run.status) }}</td>
       <td><a href="/runs?repo={{ run.repo_key | urlencode }}&pr={{ run.pr_id }}">{{ summary.runs_count }}</a></td>
-      <td>{{ action("/prs/" ~ run.project ~ "/" ~ run.repo ~ "/" ~ run.pr_id ~ "/rerun", "Повторить", csrf_input) }}</td>
+      <td>{{ action("/prs/" ~ run.project ~ "/" ~ run.repo ~ "/" ~ run.pr_id ~ "/rerun", "Re-run", csrf_input) }}</td>
     </tr>
   {% else %}
-    <tr><td colspan="6" class="empty">Проверенных PR пока нет</td></tr>
+    <tr><td colspan="6" class="empty">No reviewed PRs yet</td></tr>
   {% endfor %}
   </tbody>
 </table>

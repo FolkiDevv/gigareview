@@ -1,9 +1,9 @@
 <!doctype html>
-<html lang="ru">
+<html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>{% block title %}Обзор{% endblock %} · gigareview</title>
+  <title>{% block title %}Overview{% endblock %} · gigareview</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap">
@@ -15,11 +15,11 @@
     <a class="brand" href="/">giga<span>review</span></a>
     <nav>
       {% set section = section | default("overview") %}
-      <a href="/" {% if section == "overview" %}class="on"{% endif %}>Обзор</a>
-      <a href="/runs" {% if section == "runs" %}class="on"{% endif %}>Прогоны</a>
+      <a href="/" {% if section == "overview" %}class="on"{% endif %}>Overview</a>
+      <a href="/runs" {% if section == "runs" %}class="on"{% endif %}>Runs</a>
       <a href="/prs" {% if section == "prs" %}class="on"{% endif %}>Pull requests</a>
-      <a href="/events" {% if section == "events" %}class="on"{% endif %}>Журнал</a>
-      <a href="/config" {% if section == "config" %}class="on"{% endif %}>Конфигурация</a>
+      <a href="/events" {% if section == "events" %}class="on"{% endif %}>Log</a>
+      <a href="/config" {% if section == "config" %}class="on"{% endif %}>Configuration</a>
     </nav>
   </header>
   <main>

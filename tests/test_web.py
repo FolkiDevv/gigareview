@@ -82,7 +82,7 @@ def test_runs_page_and_filters(client: Client, store: Store) -> None:
     _seed(store)
     assert "PROJ/repo#1" in client.get("/runs").text
     filtered = client.get("/runs", params={"status": "passed"})
-    assert "Прогонов пока нет" in filtered.text
+    assert "No runs yet" in filtered.text
     by_scenario = client.get(
         "/runs",
         params={"scenario": "mypy", "outcome": "issues", "repo": "PROJ/repo", "pr": "1"},
@@ -170,7 +170,7 @@ def test_rerun_actions(client: Client, store: Store) -> None:
     assert "error=" in declined.headers["location"]
     page = client.post("/prs/PROJ/repo/1/rerun", headers=headers)
     assert page.status_code == 200
-    assert "поставлена в очередь" in page.text
+    assert "Check queued" in page.text
 
 
 def test_templates_load_nothing_external_but_fonts() -> None:

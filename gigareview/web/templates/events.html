@@ -1,22 +1,22 @@
 {% extends "base.html" %}
 {% from "_macros.html" import pager, live, badge with context %}
 {% set section = "events" %}
-{% block title %}Журнал{% endblock %}
+{% block title %}Log{% endblock %}
 {% block content %}
-<section class="head"><h1>Журнал демона</h1></section>
+<section class="head"><h1>Daemon log</h1></section>
 <form class="filters" method="get" action="/events">
-  <label>Уровень
+  <label>Level
     <select name="level">
-      <option value="">все</option>
+      <option value="">all</option>
       {% for option in levels %}<option value="{{ option }}" {% if level == option %}selected{% endif %}>{{ option | status_label }}</option>{% endfor %}
     </select>
   </label>
-  <button class="btn primary" type="submit">Показать</button>
+  <button class="btn primary" type="submit">Apply</button>
 </form>
 <div {{ live(page == 1, "5s") }}>
 <div class="table-wrap">
 <table class="grid">
-  <thead><tr><th>Время</th><th>Уровень</th><th>Прогон</th><th>Сообщение</th></tr></thead>
+  <thead><tr><th>Time</th><th>Level</th><th>Run</th><th>Message</th></tr></thead>
   <tbody>
   {% for event in events %}
     <tr>
@@ -26,7 +26,7 @@
       <td class="pre-line">{{ event.message }}</td>
     </tr>
   {% else %}
-    <tr><td colspan="4" class="empty">Записей нет</td></tr>
+    <tr><td colspan="4" class="empty">No entries</td></tr>
   {% endfor %}
   </tbody>
 </table>

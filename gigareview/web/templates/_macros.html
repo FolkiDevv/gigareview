@@ -17,7 +17,7 @@ id="live"{% if enabled %} hx-get="{{ request.url }}" hx-trigger="every {{ every 
 <div class="table-wrap">
 <table class="grid">
   <thead>
-    <tr><th>#</th><th>PR</th><th>Коммит</th><th>Статус</th><th>Запуск</th><th>Создан</th><th>Длительность</th></tr>
+    <tr><th>#</th><th>PR</th><th>Commit</th><th>Status</th><th>Trigger</th><th>Created</th><th>Duration</th></tr>
   </thead>
   <tbody>
   {% for run in runs %}
@@ -34,7 +34,7 @@ id="live"{% if enabled %} hx-get="{{ request.url }}" hx-trigger="every {{ every 
       <td class="nowrap">{{ run.duration | duration }}</td>
     </tr>
   {% else %}
-    <tr><td colspan="7" class="empty">Прогонов пока нет</td></tr>
+    <tr><td colspan="7" class="empty">No runs yet</td></tr>
   {% endfor %}
   </tbody>
 </table>
@@ -44,9 +44,9 @@ id="live"{% if enabled %} hx-get="{{ request.url }}" hx-trigger="every {{ every 
 {% macro pager(page, pages, query) -%}
 {% if pages > 1 %}
 <nav class="pager">
-  {% if page > 1 %}<a class="btn" href="?{{ query }}&page={{ page - 1 }}">← Назад</a>{% endif %}
-  <span class="muted">Страница {{ page }} из {{ pages }}</span>
-  {% if page < pages %}<a class="btn" href="?{{ query }}&page={{ page + 1 }}">Вперёд →</a>{% endif %}
+  {% if page > 1 %}<a class="btn" href="?{{ query }}&page={{ page - 1 }}">← Back</a>{% endif %}
+  <span class="muted">Page {{ page }} of {{ pages }}</span>
+  {% if page < pages %}<a class="btn" href="?{{ query }}&page={{ page + 1 }}">Next →</a>{% endif %}
 </nav>
 {% endif %}
 {%- endmacro %}

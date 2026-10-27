@@ -11,15 +11,15 @@ __all__ = ["FILTERS", "duration", "status_label", "when"]
 # Статусы прогона, исходы сценария и уровни журнала — строки; одинаковые значения
 # (passed, issues, error) подписываются одинаково.
 _STATUS_LABELS: Mapping[str, str] = MappingProxyType({
-    RunStatus.QUEUED: "в очереди",
-    RunStatus.RUNNING: "выполняется",
-    RunStatus.PASSED: "пройден",
-    RunStatus.ISSUES: "замечания",
-    RunStatus.FAILED: "сбой сценариев",
-    RunStatus.ERROR: "ошибка",
-    RunStatus.INTERRUPTED: "прерван",
-    EventLevel.NOTE: "инфо",
-    EventLevel.WARNING: "предупреждение",
+    RunStatus.QUEUED: "queued",
+    RunStatus.RUNNING: "running",
+    RunStatus.PASSED: "passed",
+    RunStatus.ISSUES: "issues",
+    RunStatus.FAILED: "scenario failures",
+    RunStatus.ERROR: "error",
+    RunStatus.INTERRUPTED: "interrupted",
+    EventLevel.NOTE: "info",
+    EventLevel.WARNING: "warning",
 })
 
 _SECONDS_IN_MINUTE = 60
@@ -39,8 +39,8 @@ def duration(seconds: float | None) -> str:
     minutes, rest = divmod(round(seconds), _SECONDS_IN_MINUTE)
     if minutes:
         padded = str(rest).zfill(2)
-        return f"{minutes} мин {padded} с"
-    return f"{rest} с"
+        return f"{minutes} min {padded} s"
+    return f"{rest} s"
 
 
 def status_label(status: str) -> str:

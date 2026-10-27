@@ -85,7 +85,7 @@ def run_page(
     """Прогон: подготовка, каждый сценарий с полным выводом, комментарии в Bitbucket."""
     run = store.runs.get(run_id)
     if run is None:
-        raise NotFoundException(f"Прогон #{run_id} не найден")
+        raise NotFoundException(f"Run #{run_id} not found")
     return _page(
         "run.html",
         notice=notice,

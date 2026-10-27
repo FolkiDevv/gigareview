@@ -1,39 +1,39 @@
 {% extends "base.html" %}
 {% from "_macros.html" import badge, action, live with context %}
 {% set section = "runs" %}
-{% block title %}Прогон #{{ run.id }}{% endblock %}
+{% block title %}Run #{{ run.id }}{% endblock %}
 {% block content %}
 <div {{ live(run.status in ("queued", "running")) }}>
   <section class="head">
     <div>
-      <h1>Прогон #{{ run.id }} {{ badge(run.status) }}{% if run.dry_run %} <span class="tag">dry-run</span>{% endif %}</h1>
+      <h1>Run #{{ run.id }} {{ badge(run.status) }}{% if run.dry_run %} <span class="tag">dry-run</span>{% endif %}</h1>
       <div class="muted">
         {% if run.pr_url %}<a href="{{ run.pr_url }}" target="_blank" rel="noopener">{{ run.repo_key }}#{{ run.pr_id }}</a>{% else %}{{ run.repo_key }}#{{ run.pr_id }}{% endif %}
         · {{ run.pr_title }} · {{ run.pr_author }}
       </div>
     </div>
     <div class="actions">
-      {{ action("/runs/" ~ run.id ~ "/rerun", "Повторить проверку", csrf_input, "primary") }}
+      {{ action("/runs/" ~ run.id ~ "/rerun", "Re-run check", csrf_input, "primary") }}
     </div>
   </section>
 
   <section class="cards">
-    <div class="card"><div class="label">Ветки</div><div class="mono">{{ run.source_branch }} → {{ run.target_branch }}</div></div>
-    <div class="card"><div class="label">Коммит</div><div class="mono">{{ run.commit_id }}</div></div>
-    <div class="card"><div class="label">Запуск</div><div>{{ run.trigger }} · {{ run.created_at | when }}</div></div>
-    <div class="card"><div class="label">Длительность</div><div>{{ run.duration | duration }}</div><div class="muted small">{{ run.started_at | when }} — {{ run.finished_at | when }}</div></div>
+    <div class="card"><div class="label">Branches</div><div class="mono">{{ run.source_branch }} → {{ run.target_branch }}</div></div>
+    <div class="card"><div class="label">Commit</div><div class="mono">{{ run.commit_id }}</div></div>
+    <div class="card"><div class="label">Trigger</div><div>{{ run.trigger }} · {{ run.created_at | when }}</div></div>
+    <div class="card"><div class="label">Duration</div><div>{{ run.duration | duration }}</div><div class="muted small">{{ run.started_at | when }} — {{ run.finished_at | when }}</div></div>
   </section>
 
   {% if run.error %}<div class="flash {% if run.status == 'error' %}bad{% else %}warn{% endif %} pre-line">{{ run.error }}</div>{% endif %}
 
   {% if run.setup_log %}
   <details class="block">
-    <summary>Подготовка: git и init</summary>
+    <summary>Setup: git and init</summary>
     <pre>{{ run.setup_log }}</pre>
   </details>
   {% endif %}
 
-  <h2>Сценарии</h2>
+  <h2>Scenarios</h2>
   {% for scenario in scenarios %}
   <article class="scenario o-{{ scenario.outcome }}">
     <header>
@@ -42,30 +42,30 @@
       <span class="muted small">{{ scenario.duration | duration }}</span>
     </header>
     <div class="codes small">
-      run: <b>{{ scenario.run_exit if scenario.run_exit is not none else "таймаут" }}</b>
+      run: <b>{{ scenario.run_exit if scenario.run_exit is not none else "timeout" }}</b>
       {% if scenario.validate_exit is not none or scenario.validate_output %} · validate: <b>{{ scenario.validate_exit if scenario.validate_exit is not none else "—" }}</b>{% endif %}
       {% if scenario.format_exit is not none or scenario.format_output %} · format: <b>{{ scenario.format_exit if scenario.format_exit is not none else "—" }}</b>{% endif %}
     </div>
     {% if scenario.error %}<div class="flash bad pre-line">{{ scenario.error }}</div>{% endif %}
     {% if scenario.tasks %}
-      <div class="label">Таски ({{ scenario.tasks | length }})</div>
+      <div class="label">Tasks ({{ scenario.tasks | length }})</div>
       {% for task in scenario.tasks %}<pre class="task">{{ task }}</pre>{% endfor %}
     {% endif %}
-    <details><summary>Вывод основных команд</summary><pre>{{ scenario.run_output or "(пусто)" }}</pre></details>
-    {% if scenario.validate_output %}<details><summary>Вывод валидации</summary><pre>{{ scenario.validate_output }}</pre></details>{% endif %}
-    {% if scenario.format_output %}<details><summary>Вывод форматирования</summary><pre>{{ scenario.format_output }}</pre></details>{% endif %}
+    <details><summary>Main commands output</summary><pre>{{ scenario.run_output or "(empty)" }}</pre></details>
+    {% if scenario.validate_output %}<details><summary>Validation output</summary><pre>{{ scenario.validate_output }}</pre></details>{% endif %}
+    {% if scenario.format_output %}<details><summary>Format output</summary><pre>{{ scenario.format_output }}</pre></details>{% endif %}
   </article>
   {% else %}
-  <p class="empty">{% if run.status in ("queued", "running") %}Сценарии ещё выполняются…{% else %}Сценарии не выполнялись{% endif %}</p>
+  <p class="empty">{% if run.status in ("queued", "running") %}Scenarios are still running…{% else %}No scenarios were run{% endif %}</p>
   {% endfor %}
 
   {% if comments %}
-  <h2>Комментарии в Bitbucket</h2>
+  <h2>Bitbucket comments</h2>
   <ul class="events">
     {% for comment in comments %}
-      <li>#{{ comment.comment_id }} · {{ "таска" if comment.kind == "task" else "итог" }}
+      <li>#{{ comment.comment_id }} · {{ "task" if comment.kind == "task" else "summary" }}
         {% if comment.scenario %}· {{ comment.scenario }}{% endif %}
-        {% if comment.resolved %}<span class="tag">закрыта</span>{% endif %}</li>
+        {% if comment.resolved %}<span class="tag">resolved</span>{% endif %}</li>
     {% endfor %}
   </ul>
   {% endif %}

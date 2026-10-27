@@ -15,21 +15,21 @@ __all__ = ["pause", "poll_now", "reload_config", "rerun_pr", "rerun_run", "resum
 def poll_now(request: AnyRequest, daemon: DaemonDep) -> Redirect:
     """Опросить Bitbucket сейчас."""
     daemon.poll_now()
-    return redirect_with(back(request), notice="Опрос Bitbucket запущен")
+    return redirect_with(back(request), notice="Bitbucket poll started")
 
 
 @post("/actions/pause", name="pause", sync_to_thread=False)
 def pause(request: AnyRequest, daemon: DaemonDep) -> Redirect:
     """Приостановить опрос."""
     daemon.set_paused(paused=True)
-    return redirect_with(back(request), notice="Опрос приостановлен")
+    return redirect_with(back(request), notice="Polling paused")
 
 
 @post("/actions/resume", name="resume", sync_to_thread=False)
 def resume(request: AnyRequest, daemon: DaemonDep) -> Redirect:
     """Возобновить опрос."""
     daemon.set_paused(paused=False)
-    return redirect_with(back(request), notice="Опрос возобновлён")
+    return redirect_with(back(request), notice="Polling resumed")
 
 
 @post("/actions/reload", name="reload_config", sync_to_thread=False)
@@ -39,7 +39,7 @@ def reload_config(request: AnyRequest, daemon: DaemonDep) -> Redirect:
         daemon.reload_config()
     except GigaReviewError as error:
         return redirect_with(back(request), error=str(error))
-    return redirect_with(back(request), notice="Конфигурация перечитана")
+    return redirect_with(back(request), notice="Configuration reloaded")
 
 
 @post("/runs/{run_id:int}/rerun", name="rerun_run")
@@ -52,7 +52,7 @@ async def rerun_run(
     """Повторить проверку PR этого прогона на текущем коммите PR."""
     run = store.runs.get(run_id)
     if run is None:
-        return redirect_with(back(request), error=f"Прогон #{run_id} не найден")
+        return redirect_with(back(request), error=f"Run #{run_id} not found")
     return await _rerun(request, daemon, run.project, run.repo, run.pr_id)
 
 
@@ -80,4 +80,4 @@ async def _rerun(
         run_id = await daemon.rerun(project, repo, pr_id)
     except GigaReviewError as error:
         return redirect_with(back(request), error=str(error))
-    return redirect_with(f"/runs/{run_id}", notice="Проверка поставлена в очередь")
+    return redirect_with(f"/runs/{run_id}", notice="Check queued")
