@@ -16,8 +16,9 @@ dev: ## Установить пакет + dev-группу (pytest, линтер
 lock: ## Обновить uv.lock после правки зависимостей в pyproject.toml
 	$(UV) lock
 
-test: ## Офлайн-тесты
-	$(UV) run pytest
+test: ## Офлайн-тесты с покрытием (код демона — не ниже 80 %)
+	$(UV) run coverage run -m pytest
+	$(UV) run coverage report
 
 lint: ## Все статические проверки — как в CI (по образцу wemake-django-template)
 	$(UV) run ruff check .

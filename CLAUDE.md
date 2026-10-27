@@ -4,8 +4,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project
 
-gigareview is a personal code-review tool built on GigaChat models, a sibling of gigacrew. It is at
-an early stage: so far the repository holds only the package skeleton and the lint/test/CI setup.
+gigareview is a personal code-review daemon for Bitbucket Server, a sibling of gigacrew. It polls
+the PRs where the user is a reviewer, checks out each new PR commit locally, runs configured
+scenarios (shell scripts; AI scenarios call gigacrew), posts tasks and a summary comment, sets the
+review status, and records everything in SQLite shown by a local Web Dashboard.
 Python 3.13+, managed with uv; flat layout (the `gigareview` package sits at the repository root).
 Comments, docstrings, user-facing text, README and commit messages are in Russian; commit messages
 follow conventional commits (`feat(review): …`, `test(cli): …`). Keep both conventions.
@@ -16,7 +18,7 @@ follow conventional commits (`feat(review): …`, `test(cli): …`). Keep both c
 make dev       # uv sync: package + dev group (pytest, linters, mypy)
 make format    # ruff check --fix + ruff format
 make lint      # every static check, same as the CI lint job
-make test      # offline tests
+make test      # offline tests under coverage; fails below 80 % of daemon code
 make check     # lint + offline tests — run before pushing
 make lock      # after editing dependencies in pyproject.toml
 make audit     # pip-audit (not blocking in CI)
@@ -60,5 +62,39 @@ Conventions the configuration enforces that are easy to trip over:
 
 ## Architecture
 
-Not designed yet. When layers appear, describe them here and enforce them with contracts in
-`.importlinter` (as gigacrew does), together with the user's consent for the config change.
+### Layers
+
+`.importlinter` enforces the layering; a layer may import only the layers below it:
+
+```
+__main__ → cli → web → daemon → pipeline → scenarios | bitbucket → store → gitops → process
+→ config → statuses → errors
+```
+
+Litestar, uvicorn and Jinja are imported only by `web` and `cli` (a second contract).
+
+### Flow
+
+- `cli/app.py:main` parses arguments and loads `Config` (`config/`, pydantic over TOML; the
+  Bitbucket token comes only from the environment variable named in `bitbucket.token_env`).
+  `serve` runs the `Daemon` and the Litestar app under one uvicorn event loop.
+- `daemon/service.py` — the poll loop (`poll` every `interval_minutes`, or at once on
+  `poll_now`) enqueues PR commits that `store.runs.should_skip` has not seen; workers run
+  `pipeline.Reviewer.review`, one run per repository at a time.
+- `pipeline/review.py` — workspace (`pipeline/workspace.py`: `gitops.GitRepo` clone/fetch/switch,
+  then `init`), scenarios one by one (`scenarios/runner.py`: run → validate → format, exit codes
+  0/1/other), then `pipeline/publish.py` resolves the previous tasks, posts tasks and the summary
+  and sets the review status. Every failure ends as a run with status `error`; the reviewer
+  never raises except on cancellation.
+- `bitbucket/client.py` is the only HTTP code; the pipeline and daemon depend on the
+  `BitbucketApi` protocol, which tests replace with `tests/fakes.py:FakeBitbucket`.
+- `store/` — one SQLite connection (stdlib `sqlite3`, migrations by `PRAGMA user_version` in
+  `store/schema.py`); repositories per table, `store/queries.py` for the dashboard.
+- `web/` — Litestar handlers (sync handlers run on the event loop), Jinja templates and vendored
+  static files. No CDN: htmx is vendored unminified (`htmx.js`, the minified build trips
+  codespell/typos); live updates are htmx polling with `hx-select="#live"`, not WebSocket.
+  POST actions use Litestar CSRF and redirect back.
+
+Child processes go through `process.run_process` (timeout kills the whole process group).
+Tests use real git repositories in `tmp_path` (`tests/fakes.py:make_origin`) and call async code
+through `asyncio.run`.

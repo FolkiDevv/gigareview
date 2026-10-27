@@ -1,0 +1,77 @@
+{% extends "base.html" %}
+{% from "_macros.html" import runs_table, action, live, badge with context %}
+{% block content %}
+<div {{ live(true) }}>
+  <section class="head">
+    <h1>Overview</h1>
+    <div class="actions">
+      {{ action("/actions/poll", "Poll now", csrf_input, "primary") }}
+      {% if status.paused %}
+        {{ action("/actions/resume", "Resume polling", csrf_input) }}
+      {% else %}
+        {{ action("/actions/pause", "Pause polling", csrf_input) }}
+      {% endif %}
+      {{ action("/actions/reload", "Reload config", csrf_input) }}
+    </div>
+  </section>
+
+  <section class="cards">
+    <div class="card">
+      <div class="label">Daemon</div>
+      <div class="big">
+        {% if not status.running %}<span class="dot bad"></span>stopped
+        {% elif status.paused %}<span class="dot warn"></span>paused
+        {% else %}<span class="dot ok"></span>running{% endif %}
+      </div>
+      <div class="muted small">polling every {{ status.interval_minutes | round(2) }} min{% if status.dry_run %} · <span class="tag">dry-run</span>{% endif %}</div>
+    </div>
+    <div class="card">
+      <div class="label">Last poll</div>
+      <div class="big">{{ status.last_poll | when }}</div>
+      <div class="muted small">next: {{ status.next_poll | when }}</div>
+    </div>
+    <div class="card">
+      <div class="label">Queue</div>
+      <div class="big">{{ status.queue_size }}</div>
+      <div class="muted small">
+        running:
+        {% for run_id in status.active_runs %}<a href="/runs/{{ run_id }}">#{{ run_id }}</a> {% else %}—{% endfor %}
+      </div>
+    </div>
+    <div class="card">
+      <div class="label">Last 24 h</div>
+      <div class="big">{{ day.total }}</div>
+      <div class="muted small">
+        {{ badge("passed") }} {{ day.count("passed") }}
+        {{ badge("issues") }} {{ day.count("issues") }}
+        {{ badge("error") }} {{ day.count("error") + day.count("failed") }}
+      </div>
+    </div>
+    <div class="card">
+      <div class="label">Total runs</div>
+      <div class="big">{{ total.total }}</div>
+      <div class="muted small">average {{ total.average_duration | duration }}</div>
+    </div>
+  </section>
+
+  {% if status.last_error %}<div class="flash bad">{{ status.last_error }}</div>{% endif %}
+
+  <section>
+    <h2>Recent runs <a class="more" href="/runs">all →</a></h2>
+    {{ runs_table(runs) }}
+  </section>
+
+  <section>
+    <h2>Recent errors <a class="more" href="/events?level=error">log →</a></h2>
+    <ul class="events">
+      {% for event in errors %}
+        <li><span class="muted nowrap">{{ event.created_at | when }}</span>
+          {% if event.run_id %}<a href="/runs/{{ event.run_id }}">#{{ event.run_id }}</a>{% endif %}
+          <span class="pre-line">{{ event.message }}</span></li>
+      {% else %}
+        <li class="empty">No errors</li>
+      {% endfor %}
+    </ul>
+  </section>
+</div>
+{% endblock %}
