@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+{% from "_macros.html" import runs_table, pager, live with context %}
+{% set section = "runs" %}
+{% block title %}Прогоны{% endblock %}
+{% block content %}
+<section class="head"><h1>Прогоны <span class="muted">{{ total }}</span></h1></section>
+<form class="filters" method="get" action="/runs">
+  <label>Статус
+    <select name="status">
+      <option value="">все</option>
+      {% for option in statuses %}<option value="{{ option }}" {% if run_filter.status == option %}selected{% endif %}>{{ option | status_label }}</option>{% endfor %}
+    </select>
+  </label>
+  <label>Репозиторий
+    <select name="repo">
+      <option value="">все</option>
+      {% for option in repos %}<option {% if run_filter.repo == option %}selected{% endif %}>{{ option }}</option>{% endfor %}
+    </select>
+  </label>
+  <label>PR <input type="number" name="pr" min="1" value="{{ run_filter.pr_id or '' }}"></label>
+  <label>Сценарий
+    <select name="scenario">
+      <option value="">любой</option>
+      {% for option in scenarios %}<option {% if run_filter.scenario == option %}selected{% endif %}>{{ option }}</option>{% endfor %}
+    </select>
+  </label>
+  <label>Исход сценария
+    <select name="outcome">
+      <option value="">любой</option>
+      {% for option in outcomes %}<option value="{{ option }}" {% if run_filter.outcome == option %}selected{% endif %}>{{ option | status_label }}</option>{% endfor %}
+    </select>
+  </label>
+  <button class="btn primary" type="submit">Показать</button>
+  <a class="btn" href="/runs">Сбросить</a>
+</form>
+<div {{ live(page == 1, "5s") }}>
+  {{ runs_table(runs) }}
+</div>
+{% set query = "status=" ~ (run_filter.status or "") ~ "&repo=" ~ (run_filter.repo | urlencode) ~ "&pr=" ~ (run_filter.pr_id or "") ~ "&scenario=" ~ (run_filter.scenario | urlencode) ~ "&outcome=" ~ (run_filter.outcome or "") %}
+{{ pager(page, pages, query) }}
+{% endblock %}

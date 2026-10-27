@@ -1,0 +1,49 @@
+{% extends "base.html" %}
+{% from "_macros.html" import action with context %}
+{% set section = "config" %}
+{% block title %}Конфигурация{% endblock %}
+{% block content %}
+<section class="head">
+  <h1>Конфигурация</h1>
+  <div class="actions">{{ action("/actions/reload", "Перечитать", csrf_input, "primary") }}</div>
+</section>
+<section class="cards">
+  <div class="card"><div class="label">Bitbucket</div><div class="mono">{{ config.bitbucket.url }}</div>
+    <div class="muted small">токен: ${{ config.bitbucket.token_env }}{% if config.bitbucket.user %} · пользователь {{ config.bitbucket.user }}{% endif %}</div></div>
+  <div class="card"><div class="label">Демон</div>
+    <div>опрос каждые {{ config.daemon.interval_minutes }} мин · параллельно {{ config.daemon.max_parallel }}</div>
+    <div class="muted small mono">{{ config.daemon.home }}{% if config.daemon.dry_run %} · dry-run{% endif %}</div></div>
+</section>
+
+<h2>Репозитории</h2>
+<div class="table-wrap">
+<table class="grid">
+  <thead><tr><th>Репозиторий</th><th>Основная ветка</th><th>init</th><th>Сценарии</th></tr></thead>
+  <tbody>
+  {% for repo, scenarios in repos %}
+    <tr>
+      <td>{{ repo.key }}<div class="muted small mono">{{ repo.clone_url }}</div></td>
+      <td class="mono">{{ repo.main_branch }}</td>
+      <td class="mono">{{ repo.init or "—" }}</td>
+      <td>{% for scenario in scenarios %}<span class="tag">{{ scenario.name }}{% if scenario.kind == "ai" %} · ИИ{% endif %}</span> {% endfor %}</td>
+    </tr>
+  {% else %}
+    <tr><td colspan="4" class="empty">Репозитории не описаны</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+
+<h2>Сценарии</h2>
+{% for repo, scenarios in repos %}
+  {% for scenario in scenarios %}
+  {% if loop.first %}<h3>{{ repo.key }}</h3>{% endif %}
+  <details class="block">
+    <summary><strong>{{ scenario.display_title }}</strong> <span class="muted mono small">{{ scenario.name }} · {{ scenario.kind }} · таймаут {{ scenario.timeout_seconds | duration }}</span></summary>
+    <div class="label">run</div><pre>{{ scenario.run }}</pre>
+    {% if scenario.validate_script %}<div class="label">validate</div><pre>{{ scenario.validate_script }}</pre>{% endif %}
+    {% if scenario.format_script %}<div class="label">format</div><pre>{{ scenario.format_script }}</pre>{% endif %}
+  </details>
+  {% endfor %}
+{% endfor %}
+{% endblock %}

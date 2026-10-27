@@ -1,7 +1,41 @@
 # Архитектурные контракты: https://import-linter.readthedocs.io
-# Запуск: `make lint` (lint-imports). Слои появятся вместе с кодом — пока только корень пакета.
+# Запуск: `make lint` (lint-imports). Слой может импортировать только слои ниже себя.
 
 [importlinter]
 root_package = gigareview
 include_external_packages = True
 exclude_type_checking_imports = True
+
+[importlinter:contract:layers]
+name = Слои gigareview
+type = layers
+layers =
+    gigareview.__main__
+    gigareview.cli
+    gigareview.web
+    gigareview.daemon
+    gigareview.pipeline
+    gigareview.scenarios | gigareview.bitbucket
+    gigareview.store
+    gigareview.gitops
+    gigareview.process
+    gigareview.config
+    gigareview.statuses
+    gigareview.errors
+
+[importlinter:contract:web-only]
+name = Litestar, uvicorn и Jinja — только в web и cli
+type = forbidden
+source_modules =
+    gigareview.daemon
+    gigareview.pipeline
+    gigareview.scenarios
+    gigareview.bitbucket
+    gigareview.store
+    gigareview.gitops
+    gigareview.process
+    gigareview.config
+forbidden_modules =
+    litestar
+    uvicorn
+    jinja2

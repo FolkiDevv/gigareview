@@ -27,14 +27,24 @@ classifiers = [
     # `uv publish` не пройдёт.
     "Private :: Do Not Upload",
 ]
-dependencies = []
+dependencies = [
+    "httpx>=0.28.1",
+    "litestar[jinja]>=2.25.0",
+    "pydantic>=2.14.1",
+    "truststore>=0.10.5",
+    "uvicorn>=0.54.0",
+]
+
+[project.scripts]
+gigareview = "gigareview.cli.app:main"
 
 [dependency-groups]
 # Ставится `uv sync` по умолчанию (PEP 735). Только для разработки — в пакет не попадает.
 # Набор проверок — по образцу wemake-django-template (см. `make lint`).
 dev = [
-    # Тесты
+    # Тесты и покрытие (порог — в [tool.coverage.report])
     "pytest>=9.1",
+    "coverage==7.10.6",
     "pytest-randomly>=5.0",
     "pytest-timeout>=2.4",
     # Стиль, форматирование, типы, архитектура
@@ -189,6 +199,18 @@ testpaths = ["tests"]
 # xfail, который вдруг прошёл, — тоже. Порядок тестов случайный (pytest-randomly).
 addopts = ["--strict-markers", "--strict-config"]
 xfail_strict = true
+
+[tool.coverage.run]
+# Порог покрытия — для кода демона: веб и командная строка проверяются тестами маршрутов,
+# но в порог не входят (так решено при планировании, см. README).
+source = ["gigareview"]
+branch = true
+omit = ["gigareview/web/*", "gigareview/cli/*", "gigareview/__main__.py"]
+
+[tool.coverage.report]
+fail_under = 80
+show_missing = true
+skip_covered = true
 
 [tool.deptry]
 known_first_party = ["gigareview"]
