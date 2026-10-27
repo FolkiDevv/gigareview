@@ -1,0 +1,108 @@
+---
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# A new push to a PR makes the previous run irrelevant.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Pinned so a uv release cannot change CI behaviour without a commit.
+  UV_VERSION: "0.11.32"
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install uv
+        # Exact version, not @v9: setup-uv publishes releases past v7 but stops maintaining
+        # moving major tags there, so @v9 does not resolve.
+        uses: astral-sh/setup-uv@v9.0.0
+        with:
+          version: ${{ env.UV_VERSION }}
+          enable-cache: true
+
+      - name: Install dependencies
+        # --locked fails the build if uv.lock has drifted from pyproject.toml.
+        run: uv sync --locked --dev
+
+      # The same checks as `make lint`, modelled on wemake-django-template.
+      - name: ruff check
+        run: uv run ruff check --output-format github
+
+      - name: ruff format
+        run: uv run ruff format --check --diff
+
+      - name: wemake-python-styleguide
+        run: uv run flake8 .
+
+      - name: import-linter
+        run: uv run lint-imports
+
+      - name: mypy
+        run: uv run mypy
+
+      - name: codespell
+        run: uv run codespell .
+
+      - name: typos
+        run: uv run typos .
+
+      - name: yamllint
+        run: uv run yamllint -s .
+
+      - name: deptry
+        run: uv run deptry .
+
+      - name: pip check
+        run: uv pip check
+
+      - name: pip-audit
+        # Not blocking, as in the template: advisories without a fixed release would fail
+        # every PR. Read the report in the job log.
+        continue-on-error: true
+        run: uv run pip-audit --skip-editable --desc
+
+  test:
+    name: test (${{ matrix.os }}, py${{ matrix.python }})
+    runs-on: ${{ matrix.os }}
+    # The suite takes well under a minute; a hang should fail with logs, not run for 6 hours.
+    timeout-minutes: 15
+    strategy:
+      # A 3.13 failure must not hide the 3.14 result.
+      fail-fast: false
+      matrix:
+        # Linux only for now; add Windows and macOS once the suite is checked there.
+        include:
+          - os: ubuntu-latest
+            python: "3.13"
+          - os: ubuntu-latest
+            python: "3.14"
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install uv
+        # Exact version, not @v9: setup-uv publishes releases past v7 but stops maintaining
+        # moving major tags there, so @v9 does not resolve.
+        uses: astral-sh/setup-uv@v9.0.0
+        with:
+          version: ${{ env.UV_VERSION }}
+          enable-cache: true
+          python-version: ${{ matrix.python }}
+
+      - name: Install dependencies
+        run: uv sync --locked --dev
+
+      - name: Run tests
+        # --timeout fails a hanging test by name, with a traceback, instead of a silent job timeout.
+        run: uv run pytest -q --timeout=120

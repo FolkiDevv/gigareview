@@ -1,0 +1,7 @@
+# Архитектурные контракты: https://import-linter.readthedocs.io
+# Запуск: `make lint` (lint-imports). Слои появятся вместе с кодом — пока только корень пакета.
+
+[importlinter]
+root_package = gigareview
+include_external_packages = True
+exclude_type_checking_imports = True
