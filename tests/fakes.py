@@ -76,6 +76,9 @@ class FakeBitbucket:
     list_error: Exception | None = None
     get_error: Exception | None = None
     resolve_error: BitbucketError | None = None
+    update_error: BitbucketError | None = None
+    edits: list[int] = field(default_factory=list)
+    status_texts: list[str] = field(default_factory=list)
     overrides: dict[int, PullRequest] = field(default_factory=dict)
     closed: bool = False
 
@@ -121,6 +124,8 @@ class FakeBitbucket:
     ) -> Comment:
         comment_id = 100 + len(self.comments)
         self.comments.append(PostedComment(pr.id, text, task, anchor, comment_id))
+        if not task:
+            self.status_texts.append(text)
         return Comment(id=comment_id, version=0, text=text)
 
     async def resolve_task(self, pr: PullRequest, comment_id: int, version: int) -> Comment:
@@ -128,6 +133,23 @@ class FakeBitbucket:
             raise self.resolve_error
         self.resolved.append(comment_id)
         return Comment(id=comment_id, version=version + 1, state="RESOLVED")
+
+    async def update_comment(
+        self,
+        pr: PullRequest,
+        comment_id: int,
+        version: int,
+        text: str,
+    ) -> Comment:
+        if self.update_error is not None:
+            raise self.update_error
+        for comment in self.comments:
+            if comment.id == comment_id:
+                comment.text = text
+                self.edits.append(comment_id)
+                self.status_texts.append(text)
+                return Comment(id=comment_id, version=version + 1, text=text)
+        raise BitbucketError("not found", status_code=404)
 
     async def set_review_status(self, pr: PullRequest, status: ReviewStatus) -> None:
         self.statuses.append((pr.id, status))

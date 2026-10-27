@@ -38,6 +38,16 @@ class BitbucketApi(Protocol):
         """Помечает таску выполненной (``RESOLVED``)."""
         ...
 
+    async def update_comment(
+        self,
+        pr: PullRequest,
+        comment_id: int,
+        version: int,
+        text: str,
+    ) -> Comment:
+        """Меняет текст комментария (статусный комментарий прогона)."""
+        ...
+
     async def set_review_status(self, pr: PullRequest, status: ReviewStatus) -> None:
         """Ставит статус ревью текущего пользователя."""
         ...

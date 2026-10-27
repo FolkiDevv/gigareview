@@ -19,6 +19,7 @@ __all__ = [
     "RunRecord",
     "RunStats",
     "ScenarioRecord",
+    "TaskDetails",
 ]
 
 
@@ -71,6 +72,7 @@ class RunRecord:
     started_at: datetime | None
     finished_at: datetime | None
     dry_run: bool
+    published: bool = False
 
     @classmethod
     def from_row(cls, row: sqlite3.Row | Mapping[str, Any]) -> Self:
@@ -79,6 +81,7 @@ class RunRecord:
         fields["trigger"] = Trigger(fields["trigger"])
         fields["status"] = RunStatus(fields["status"])
         fields["dry_run"] = bool(fields["dry_run"])
+        fields["published"] = bool(fields.get("published"))
         for stamp in ("created_at", "started_at", "finished_at"):
             fields[stamp] = _parse_time(fields[stamp])
         return cls(**fields)
@@ -136,6 +139,15 @@ TASK_SEPARATOR = "\x1e"
 
 
 @dataclass(frozen=True, slots=True)
+class TaskDetails:
+    """Текст и привязка опубликованной таски: их видит следующий прогон сценария."""
+
+    text: str
+    path: str | None = None
+    line: int | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class CommentRecord:
     """Комментарий, который демон оставил в Bitbucket."""
 
@@ -146,6 +158,7 @@ class CommentRecord:
     kind: CommentKind
     scenario: str
     resolved: bool
+    details: TaskDetails
 
 
 @dataclass(frozen=True, slots=True)

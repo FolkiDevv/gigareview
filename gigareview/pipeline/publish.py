@@ -1,14 +1,14 @@
-"""Публикация итогов прогона в Bitbucket: таски, итоговый комментарий, статус ревью."""
+"""Публикация итогов прогона в Bitbucket: таски сценариев и статус ревью."""
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from http import HTTPStatus
 from types import MappingProxyType
 
 from gigareview.bitbucket import Anchor, BitbucketApi, PullRequest
 from gigareview.errors import BitbucketError
-from gigareview.scenarios import ScenarioReport, summary_text, task_text
+from gigareview.scenarios import ScenarioReport, task_text
 from gigareview.statuses import EventLevel, Outcome, ReviewStatus, RunStatus
-from gigareview.store import CommentKind, Store
+from gigareview.store import CommentKind, Store, TaskDetails
 
 __all__ = ["Publisher"]
 
@@ -27,27 +27,24 @@ class Publisher:
         self._store = store
         self._run_id = run_id
 
-    async def publish(
-        self,
-        pr: PullRequest,
-        reports: Sequence[ScenarioReport],
-        status: RunStatus,
-        run_url: str,
-    ) -> None:
-        """Закрывает прошлые таски, публикует новые и итог, ставит статус ревью."""
-        # Пользователь нужен для статуса ревью: если его не определить, лучше упасть
-        # до публикации, чем оставить таски без статуса и повторить их следующим прогоном.
-        await self._api.current_slug()
-        await self._resolve_previous(pr)
+    async def publish_tasks(self, pr: PullRequest, reports: Sequence[ScenarioReport]) -> None:
+        """Таски сценариев ``reports``: их прошлые таски закрываются, новые публикуются."""
+        names = {report.scenario.name for report in reports}
+        await self._resolve_previous(pr, reports, lambda scenario: scenario in names)
         for report in reports:
             if report.outcome is Outcome.ISSUES:
                 # Таски публикуются по порядку сценариев: так их и читают в PR.
                 await self._post_tasks(pr, report)  # noqa: WPS476
-        summary = await self._api.add_comment(
-            pr,
-            summary_text(reports, commit=pr.commit, run_url=run_url),
-        )
-        self._store.comments.add(self._run_id, summary.id, summary.version, CommentKind.SUMMARY)
+
+    async def finish(
+        self,
+        pr: PullRequest,
+        reports: Sequence[ScenarioReport],
+        status: RunStatus,
+    ) -> None:
+        """Все сценарии завершены: закрыть таски убранных сценариев, поставить статус ревью."""
+        names = {report.scenario.name for report in reports}
+        await self._resolve_previous(pr, (), lambda scenario: scenario not in names)
         review_status = _REVIEW_STATUSES.get(status)
         if review_status is not None:
             await self._api.set_review_status(pr, review_status)
@@ -69,11 +66,28 @@ class Publisher:
                 comment.version,
                 CommentKind.TASK,
                 report.scenario.name,
+                TaskDetails(task.text, task.path, task.line),
             )
 
-    async def _resolve_previous(self, pr: PullRequest) -> None:
-        """Закрывает открытые таски прошлых прогонов; таска, удалённая вручную, — забыта."""
+    async def _resolve_previous(
+        self,
+        pr: PullRequest,
+        reports: Sequence[ScenarioReport],
+        selected: Callable[[str], bool],
+    ) -> None:
+        """Закрывает открытые таски сценариев ``selected``; удалённая вручную — забыта.
+
+        Таски инкрементальных сценариев остаются открытыми, кроме тех, что сценарий закрыл
+        (``resolved``): он ревьюит только новые изменения и не повторяет прежние замечания.
+        """
+        incremental = [report for report in reports if report.scenario.incremental]
+        kept = {report.scenario.name for report in incremental}
+        resolved = {task_id for report in incremental for task_id in report.resolved}
         for record in self._store.comments.open_tasks(pr.project, pr.repo, pr.id):
+            if not selected(record.scenario):
+                continue
+            if record.scenario in kept and record.comment_id not in resolved:
+                continue
             try:
                 # Немного запросов, а ошибку каждого нужно разобрать отдельно.
                 await self._api.resolve_task(  # noqa: WPS476

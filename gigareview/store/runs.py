@@ -3,7 +3,7 @@
 import sqlite3
 from dataclasses import asdict
 
-from gigareview.statuses import RunStatus, Trigger
+from gigareview.statuses import Outcome, RunStatus, Trigger
 from gigareview.store.clock import stamp
 from gigareview.store.records import TASK_SEPARATOR, NewRun, RunRecord, ScenarioRecord
 
@@ -115,6 +115,43 @@ class RunRepository:
             for row in rows
         )
         return errors >= MAX_AUTO_ATTEMPTS or any(status in _SETTLED for status in statuses)
+
+    def last_reviewed_commit(
+        self,
+        project: str,
+        repo: str,
+        pr_id: int,
+        scenario: str,
+        *,
+        other_than: str,
+    ) -> str | None:
+        """Последний коммит PR (не ``other_than``), чьё ревью сценарием попало в Bitbucket.
+
+        Считаются только прогоны, опубликованные целиком (не сухой режим и не «PR изменился
+        во время прогона»), где сценарий отработал без ошибки.
+        """
+        row = self._db.execute(
+            "SELECT runs.commit_id FROM runs "
+            "JOIN scenario_results ON scenario_results.run_id = runs.id "
+            "WHERE runs.project = ? AND runs.repo = ? AND runs.pr_id = ? "
+            "AND runs.commit_id != ? AND scenario_results.name = ? "
+            "AND scenario_results.outcome IN (?, ?) AND runs.published = 1 "
+            "ORDER BY runs.id DESC LIMIT 1",
+            (
+                project,
+                repo,
+                pr_id,
+                other_than,
+                scenario,
+                Outcome.PASSED.value,
+                Outcome.ISSUES.value,
+            ),
+        ).fetchone()
+        return None if row is None else str(row["commit_id"])
+
+    def mark_published(self, run_id: int) -> None:
+        """Итоги прогона (таски, статусный комментарий, статус ревью) опубликованы целиком."""
+        self._db.execute("UPDATE runs SET published = 1 WHERE id = ?", (run_id,))
 
     def interrupt_active(self) -> int:
         """Прогоны, оставшиеся ``queued``/``running`` от прошлого запуска, — ``interrupted``."""

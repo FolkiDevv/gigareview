@@ -10,3 +10,4 @@ from gigareview.store.records import RunFilter as RunFilter
 from gigareview.store.records import RunRecord as RunRecord
 from gigareview.store.records import RunStats as RunStats
 from gigareview.store.records import ScenarioRecord as ScenarioRecord
+from gigareview.store.records import TaskDetails as TaskDetails

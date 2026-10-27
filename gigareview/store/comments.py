@@ -2,7 +2,7 @@
 
 import sqlite3
 
-from gigareview.store.records import CommentKind, CommentRecord
+from gigareview.store.records import CommentKind, CommentRecord, TaskDetails
 
 __all__ = ["CommentRepository"]
 
@@ -21,20 +21,43 @@ class CommentRepository:
         version: int,
         kind: CommentKind,
         scenario: str = "",
-    ) -> None:
-        """Запоминает опубликованный комментарий прогона ``run_id``."""
-        self._db.execute(
+        details: TaskDetails | None = None,
+    ) -> int:
+        """Запоминает опубликованный комментарий прогона ``run_id``; возвращает номер записи."""
+        task = details or TaskDetails("")
+        cursor = self._db.execute(
             "INSERT INTO bb_comments (run_id, project, repo, pr_id, comment_id, version, kind, "
-            "scenario) SELECT id, project, repo, pr_id, ?, ?, ?, ? FROM runs WHERE id = ?",
-            (comment_id, version, kind.value, scenario, run_id),
+            "scenario, text, path, line) "
+            "SELECT id, project, repo, pr_id, ?, ?, ?, ?, ?, ?, ? FROM runs WHERE id = ?",
+            (comment_id, version, kind.value, scenario, task.text, task.path, task.line, run_id),
         )
+        return int(cursor.lastrowid or 0)
 
-    def open_tasks(self, project: str, repo: str, pr_id: int) -> list[CommentRecord]:
-        """Неразрешённые таски демона в PR (их закрывает следующий прогон)."""
+    def latest_summary(self, project: str, repo: str, pr_id: int) -> CommentRecord | None:
+        """Статусный комментарий PR последнего прогона (его обновляют следующие прогоны)."""
+        row = self._db.execute(
+            "SELECT * FROM bb_comments WHERE project = ? AND repo = ? AND pr_id = ? "
+            "AND kind = ? ORDER BY id DESC LIMIT 1",
+            (project, repo, pr_id, CommentKind.SUMMARY.value),
+        ).fetchone()
+        return None if row is None else _record(row)
+
+    def set_version(self, record_id: int, version: int) -> None:
+        """Комментарий изменён: новая версия в Bitbucket."""
+        self._db.execute("UPDATE bb_comments SET version = ? WHERE id = ?", (version, record_id))
+
+    def open_tasks(
+        self,
+        project: str,
+        repo: str,
+        pr_id: int,
+        scenario: str | None = None,
+    ) -> list[CommentRecord]:
+        """Неразрешённые таски демона в PR (все или одного сценария ``scenario``)."""
         rows = self._db.execute(
             "SELECT * FROM bb_comments WHERE project = ? AND repo = ? AND pr_id = ? "
-            "AND kind = ? AND resolved = 0 ORDER BY id",
-            (project, repo, pr_id, CommentKind.TASK.value),
+            "AND kind = ? AND resolved = 0 AND (? IS NULL OR scenario = ?) ORDER BY id",
+            (project, repo, pr_id, CommentKind.TASK.value, scenario, scenario),
         )
         return [_record(row) for row in rows]
 
@@ -61,4 +84,5 @@ def _record(row: sqlite3.Row) -> CommentRecord:
         kind=CommentKind(row["kind"]),
         scenario=row["scenario"],
         resolved=bool(row["resolved"]),
+        details=TaskDetails(row["text"], row["path"], row["line"]),
     )

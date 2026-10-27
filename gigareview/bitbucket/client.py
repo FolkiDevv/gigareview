@@ -114,19 +114,17 @@ class BitbucketClient:
 
     async def resolve_task(self, pr: PullRequest, comment_id: int, version: int) -> Comment:
         """Помечает таску выполненной; устаревшая версия — перечитывает и повторяет."""
-        path = f"{_pr_path(pr.project, pr.repo, pr.id)}/comments/{comment_id}"
-        try:
-            raw = await self._json("PUT", path, json={"version": version, "state": "RESOLVED"})
-        except BitbucketError as error:
-            if error.status_code != HTTPStatus.CONFLICT:
-                raise
-            fresh = Comment.model_validate(await self._json("GET", path))
-            raw = await self._json(
-                "PUT",
-                path,
-                json={"version": fresh.version, "state": "RESOLVED"},
-            )
-        return Comment.model_validate(raw)
+        return await self._put_comment(pr, comment_id, version, {"state": "RESOLVED"})
+
+    async def update_comment(
+        self,
+        pr: PullRequest,
+        comment_id: int,
+        version: int,
+        text: str,
+    ) -> Comment:
+        """Меняет текст комментария; устаревшая версия — перечитывает и повторяет."""
+        return await self._put_comment(pr, comment_id, version, {"text": text})
 
     async def set_review_status(self, pr: PullRequest, status: ReviewStatus) -> None:
         """Статус ревью текущего пользователя: APPROVED, NEEDS_WORK или UNAPPROVED."""
@@ -140,6 +138,24 @@ class BitbucketClient:
                 "status": status.value,
             },
         )
+
+    async def _put_comment(
+        self,
+        pr: PullRequest,
+        comment_id: int,
+        version: int,
+        changes: dict[str, Any],
+    ) -> Comment:
+        """Изменение комментария; при HTTP 409 (версия устарела) — с версией из Bitbucket."""
+        path = f"{_pr_path(pr.project, pr.repo, pr.id)}/comments/{comment_id}"
+        try:
+            raw = await self._json("PUT", path, json={"version": version, **changes})
+        except BitbucketError as error:
+            if error.status_code != HTTPStatus.CONFLICT:
+                raise
+            fresh = Comment.model_validate(await self._json("GET", path))
+            raw = await self._json("PUT", path, json={"version": fresh.version, **changes})
+        return Comment.model_validate(raw)
 
     async def _paged(self, path: str, query: dict[str, str]) -> list[dict[str, Any]]:
         """Все страницы списка ``path`` (``values`` подряд)."""

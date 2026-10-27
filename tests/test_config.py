@@ -23,7 +23,11 @@ def _config(**extra: object) -> Config:
 def test_sample_config_is_valid() -> None:
     config = Config.model_validate(tomllib.loads(SAMPLE_CONFIG))
     repo = config.repos[0]
-    assert [scenario.name for scenario in config.scenarios_for(repo)] == ["mypy", "pytest"]
+    assert [scenario.name for scenario in config.scenarios_for(repo)] == [
+        "mypy",
+        "ai-review",
+        "pytest",
+    ]
     assert repo.main_branch == "master"
     assert config.scenarios["mypy"].validate_script
     assert config.scenarios["mypy"].format_script
@@ -183,3 +187,18 @@ def test_default_config_path(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) ->
     assert default_config_path() == Path("~/.gigareview/config.toml").expanduser()
     monkeypatch.setenv("GIGAREVIEW_CONFIG", str(tmp_path / "c.toml"))
     assert default_config_path() == tmp_path / "c.toml"
+
+
+def test_incremental_only_for_ai_scenarios() -> None:
+    config = _config(scenarios={"ai": {"run": "x", "kind": "ai", "incremental": True}})
+    assert config.scenarios["ai"].incremental
+    with pytest.raises(ValueError, match="incremental"):
+        _config(scenarios={"plain": {"run": "x", "incremental": True}})
+
+
+def test_sample_has_incremental_ai_review() -> None:
+    config = Config.model_validate(tomllib.loads(SAMPLE_CONFIG))
+    review = config.scenarios["ai-review"]
+    assert review.kind is ScenarioKind.AI
+    assert review.incremental
+    assert "gigacrew --mode plan" in review.run

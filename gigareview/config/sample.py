@@ -21,8 +21,9 @@ port = 8765
 
 # Общие сценарии — для всех репозиториев.
 # Окружение команд: TARGET_BRANCH, SOURCE_BRANCH, PR_ID, PR_PROJECT, PR_REPO, PR_COMMIT,
-# MERGE_BASE, GR_REPO_DIR, GR_ARTIFACTS; валидации и форматированию — ещё GR_RUN_EXIT и
-# GR_RUN_OUTPUT, а вывод основных команд приходит им на stdin.
+# PR_TITLE, PR_DESCRIPTION, PR_AUTHOR, MERGE_BASE, GR_PREV_COMMIT, GR_OPEN_TASKS, GR_REPO_DIR,
+# GR_ARTIFACTS, GIGAREVIEW; валидации и форматированию — ещё GR_RUN_EXIT и GR_RUN_OUTPUT,
+# а вывод основных команд приходит им на stdin.
 # Код валидации: 0 — замечаний нет, 1 — есть замечания, 2 — сценарий отработал некорректно.
 
 [scenarios.mypy]
@@ -38,6 +39,21 @@ comm -13 <(strip "$GR_ARTIFACTS/base.txt") <(strip "$GR_ARTIFACTS/pr.txt")
 validate = '[ "$GR_RUN_EXIT" -eq 0 ] || exit 2; test -z "$(cat)"'
 format = 'printf "Новые ошибки mypy:\n\n"; cat'
 timeout_minutes = 5
+
+# ИИ-ревью на gigacrew: gigacrew — в PATH, его настройки (GIGACREW_*) — из окружения демона
+# или ~/.gigacode/.env. После первого ревью смотрит только новые коммиты PR; свои прошлые
+# таски закрывает сам, когда они исправлены.
+[scenarios.ai-review]
+title = "ИИ-ревью: ошибки и регрессии"
+kind = "ai"
+incremental = true
+run = """
+prompt=$("$GIGAREVIEW" ai-review prompt) || exit 2
+gigacrew --mode plan --no-save --no-color -p "$prompt"
+"""
+validate = '"$GIGAREVIEW" ai-review tasks --check'
+format = '"$GIGAREVIEW" ai-review tasks'
+timeout_minutes = 20
 
 [[repos]]
 project = "PROJ"

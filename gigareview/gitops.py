@@ -75,6 +75,16 @@ class GitRepo:
         merge_base = await self._git("merge-base", f"origin/{target_branch}", commit)
         return merge_base.output.strip()
 
+    async def is_ancestor(self, ancestor: str, commit: str) -> bool:
+        """``ancestor`` — предок ``commit``; коммита нет в копии или история переписана — нет."""
+        outcome = await run_process(
+            ("git", "merge-base", "--is-ancestor", ancestor, commit),
+            cwd=self.path,
+            env=subprocess_env(_GIT_ENV),
+            time_limit=self._timeout,
+        )
+        return outcome.exit_code == 0
+
     async def _git(self, *args: str, cwd: Path | None = None) -> ProcessOutcome:
         """Команда git; ненулевой код или таймаут — :class:`GitError` с её выводом."""
         joined = redact_credentials(" ".join(args), self._clone_url)
