@@ -5,7 +5,7 @@ import pytest
 from fakes import Origin, git
 
 from gigareview.errors import GitError
-from gigareview.gitops import GitRepo
+from gigareview.gitops import GitRepo, redact_credentials
 
 
 def _checkout(repo: GitRepo, commit: str) -> str:
@@ -87,6 +87,13 @@ def test_credentials_are_redacted(tmp_path: Path) -> None:
     assert "s3cret" not in str(caught.value)
     assert "s3cret" not in repo.log
     assert "***@localhost" in repo.log
+
+
+def test_token_as_username_is_redacted() -> None:
+    url = "https://TOKEN123@bb.example.com/scm/p/r.git"
+    assert redact_credentials(f"clone {url}", url) == "clone https://***@bb.example.com/scm/p/r.git"
+    ssh = "ssh://git@bb.example.com:7999/p/r.git"
+    assert redact_credentials(ssh, ssh) == ssh
 
 
 def test_timeout_is_git_error(tmp_path: Path, origin: Origin) -> None:

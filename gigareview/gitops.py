@@ -12,6 +12,8 @@ __all__ = ["GIT_TIMEOUT", "GitRepo", "redact_credentials"]
 #: Таймаут одной команды git, секунды (клон большого репозитория бывает долгим).
 GIT_TIMEOUT = 600.0
 
+_HTTP_SCHEMES = frozenset(("http", "https"))
+
 # git не должен ждать ввода логина или пароля: без терминала он бы завис до таймаута.
 _GIT_ENV = MappingProxyType({"GIT_TERMINAL_PROMPT": "0", "GIT_ASKPASS": "true", "LC_ALL": "C"})
 
@@ -93,12 +95,14 @@ class GitRepo:
 
 
 def redact_credentials(text: str, url: str) -> str:
-    """Скрывает логин и пароль из ``url`` (``https://user:pass@host``) в тексте.
+    """Скрывает учётные данные из ``url`` в тексте.
 
-    Адрес без пароля (``ssh://git@host``) секретов не содержит и не меняется.
+    Пароль скрывается всегда, а у http(s) — и одиночное имя: часто это токен
+    (``https://TOKEN@host``). Имя в ``ssh://git@host`` секретом не считается.
     """
     parts = urlsplit(url)
-    if parts.password is None:
+    token_as_user = parts.scheme.lower() in _HTTP_SCHEMES and bool(parts.username)
+    if parts.password is None and not token_as_user:
         return text
     userinfo = parts.netloc.rpartition("@")[0]
     return text.replace(f"{userinfo}@", "***@")

@@ -83,11 +83,11 @@ def test_reload_config(tmp_path: Path, store: Store) -> None:
     path.write_text(SAMPLE_CONFIG, encoding="utf-8")
     daemon = _daemon(tmp_path, store, "unused", FakeBitbucket(), config_path=path)
     daemon.reload_config()
-    assert daemon.config.bitbucket.url == "https://bitbucket.example.com"
+    assert daemon.config.repos[0].slug == "backend"
     path.write_text("broken = [", encoding="utf-8")
     with pytest.raises(ConfigError):
         daemon.reload_config()
-    assert daemon.config.bitbucket.url == "https://bitbucket.example.com"
+    assert daemon.config.repos[0].slug == "backend"
 
 
 def test_reload_warns_about_restart_only_settings(tmp_path: Path, store: Store) -> None:
@@ -97,6 +97,9 @@ def test_reload_warns_about_restart_only_settings(tmp_path: Path, store: Store) 
     daemon.reload_config()
     warnings = [event.message for event in store.events.list(EventLevel.WARNING)]
     assert any("перезапуска" in message for message in warnings)
+    assert daemon.config.bitbucket.token_env == "GR_TEST_TOKEN"
+    assert daemon.config.bitbucket.url == "https://bb.example.com"
+    assert daemon.config.repos[0].slug == "backend"
 
 
 def test_reload_without_path_is_error(tmp_path: Path, store: Store) -> None:

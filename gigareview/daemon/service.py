@@ -165,7 +165,12 @@ class Daemon:
             raise GigaReviewError("Демон запущен без файла конфигурации")
         fresh = load_config(self._config_path)
         old = self.config
-        self._reviewer.config = fresh
+        # Подключение и параллелизм остаются прежними до перезапуска: в том числе
+        # token_env, по которому токен скрывается из окружения сценариев.
+        kept_daemon = fresh.daemon.model_copy(update={"max_parallel": old.daemon.max_parallel})
+        self._reviewer.config = fresh.model_copy(
+            update={"bitbucket": old.bitbucket, "dashboard": old.dashboard, "daemon": kept_daemon},
+        )
         self._event(EventLevel.NOTE, f"Конфигурация перечитана из {self._config_path}")
         restart_needed = (
             fresh.bitbucket != old.bitbucket
