@@ -162,7 +162,8 @@ class DashboardSettings(_Model):
     @property
     def base_url(self) -> str:
         """Адрес для ссылок: ``public_url`` или ``http://host:port``."""
-        return (self.public_url or f"http://{self.host}:{self.port}").rstrip("/")
+        host = f"[{self.host}]" if ":" in self.host else self.host
+        return (self.public_url or f"http://{host}:{self.port}").rstrip("/")
 
     @field_validator("host", mode="after")
     @classmethod

@@ -213,6 +213,28 @@ def test_invalid_json_is_bitbucket_error() -> None:
     assert caught.value.status_code == 200
 
 
+def _client_options(monkeypatch: pytest.MonkeyPatch, url: str) -> dict[str, Any]:
+    captured: dict[str, Any] = {}
+    real = httpx.AsyncClient
+
+    def spy(**options: Any) -> httpx.AsyncClient:
+        captured.update(options)
+        return real(**options)
+
+    monkeypatch.setattr(httpx, "AsyncClient", spy)
+    client = BitbucketClient(url, "tok")
+    asyncio.run(client.aclose())
+    return captured
+
+
+def test_https_uses_environment_proxies(monkeypatch: pytest.MonkeyPatch) -> None:
+    assert _client_options(monkeypatch, "https://bb.example.com")["trust_env"]
+
+
+def test_local_http_ignores_environment_proxies(monkeypatch: pytest.MonkeyPatch) -> None:
+    assert not _client_options(monkeypatch, "http://127.0.0.1:7990")["trust_env"]
+
+
 def test_network_error() -> None:
     def responder(request: httpx.Request) -> httpx.Response:
         raise httpx.ConnectError("refused", request=request)

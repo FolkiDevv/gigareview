@@ -1,5 +1,6 @@
 import asyncio
 import json
+import sqlite3
 from pathlib import Path
 from typing import Any
 
@@ -196,6 +197,22 @@ def test_unexpected_exception_is_error(tmp_path: Path, store: Store, origin: Ori
     run, _ = _review(tmp_path, store, origin, api=api)
     assert run.status is RunStatus.ERROR
     assert "kaboom" in run.error
+
+
+def test_mark_running_failure_is_recorded(
+    tmp_path: Path,
+    store: Store,
+    origin: Origin,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def broken(run_id: int) -> None:
+        raise sqlite3.OperationalError("database is locked")
+
+    monkeypatch.setattr(store.runs, "mark_running", broken)
+    run, api = _review(tmp_path, store, origin)
+    assert run.status is RunStatus.ERROR
+    assert "database is locked" in run.error
+    assert api.comments == []
 
 
 def test_cancellation_marks_interrupted(tmp_path: Path, store: Store, origin: Origin) -> None:

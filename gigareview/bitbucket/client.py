@@ -40,6 +40,8 @@ class BitbucketClient:
             transport=transport,
             # Корпоративный CA обычно лежит в системном хранилище, а не в certifi.
             verify=truststore.SSLContext(ssl.PROTOCOL_TLS_CLIENT),
+            # По HTTP (только localhost) токен не должен уйти через прокси из окружения.
+            trust_env=base_url.startswith("https://"),
         )
 
     async def __aenter__(self) -> Self:

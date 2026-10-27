@@ -47,8 +47,6 @@ class Reviewer:
 
     async def review(self, run_id: int, pr: PullRequest) -> RunStatus:
         """Выполняет прогон ``run_id`` по ``pr``; любой сбой — статус ``error`` с причиной."""
-        self._store.runs.mark_running(run_id)
-        self._event(EventLevel.NOTE, f"Прогон {_pr_label(pr)} начат", run_id)
         try:
             status, note = await self._review(run_id, pr)
         except asyncio.CancelledError:
@@ -64,6 +62,8 @@ class Reviewer:
 
     async def _review(self, run_id: int, pr: PullRequest) -> tuple[RunStatus, str]:
         """Прогон по шагам; возвращает статус и примечание (почему не опубликован)."""
+        self._store.runs.mark_running(run_id)
+        self._event(EventLevel.NOTE, f"Прогон {_pr_label(pr)} начат", run_id)
         run = self._store.runs.get(run_id)
         repo = self.config.find_repo(pr.project, pr.repo)
         if run is None or repo is None:
