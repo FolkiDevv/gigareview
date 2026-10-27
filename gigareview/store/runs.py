@@ -88,16 +88,25 @@ class RunRepository:
         )
         return [ScenarioRecord.from_row(row) for row in rows]
 
-    def should_skip(self, project: str, repo: str, pr_id: int, commit_id: str) -> bool:
+    def should_skip(
+        self,
+        project: str,
+        repo: str,
+        pr_id: int,
+        commit_id: str,
+        *,
+        dry_run: bool,
+    ) -> bool:
         """Коммит уже проверен, проверяется или исчерпал попытки — опрос его не ставит.
 
         Прерванные прогоны не считаются; упавшие с ``error`` повторяются до
-        :data:`MAX_AUTO_ATTEMPTS` раз (сбой сети или git может пройти сам).
+        :data:`MAX_AUTO_ATTEMPTS` раз (сбой сети или git может пройти сам). Вне
+        сухого режима сухие прогоны не считаются: их результат в Bitbucket не попал.
         """
         rows = self._db.execute(
             "SELECT status FROM runs WHERE project = ? AND repo = ? AND pr_id = ? "
-            "AND commit_id = ?",
-            (project, repo, pr_id, commit_id),
+            "AND commit_id = ? AND (? OR dry_run = 0)",
+            (project, repo, pr_id, commit_id, int(dry_run)),
         ).fetchall()
         statuses = [RunStatus(row["status"]) for row in rows]
         errors = statuses.count(RunStatus.ERROR)

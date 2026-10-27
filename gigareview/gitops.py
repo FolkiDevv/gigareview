@@ -2,6 +2,7 @@
 
 from pathlib import Path
 from types import MappingProxyType
+from urllib.parse import urlsplit
 
 from gigareview.errors import GitError
 from gigareview.process import ProcessOutcome, run_process, subprocess_env
@@ -64,7 +65,7 @@ class GitRepo:
 
     async def _git(self, *args: str, cwd: Path | None = None) -> ProcessOutcome:
         """Команда git; ненулевой код или таймаут — :class:`GitError` с её выводом."""
-        joined = " ".join(args)
+        joined = _redact(" ".join(args), self._clone_url)
         command = f"git {joined}"
         outcome = await run_process(
             ("git", *args),
@@ -72,14 +73,25 @@ class GitRepo:
             env=subprocess_env(_GIT_ENV),
             time_limit=self._timeout,
         )
-        self._log.append(f"$ {command}\n{outcome.output}")
+        output = _redact(outcome.output, self._clone_url)
+        self._log.append(f"$ {command}\n{output}")
         if outcome.timed_out:
             raise GitError(f"`{command}` не уложилась в {self._timeout:.0f} с")
         if outcome.exit_code != 0:
-            raise GitError(
-                f"`{command}` завершилась с кодом {outcome.exit_code}:\n{outcome.output}",
-            )
+            raise GitError(f"`{command}` завершилась с кодом {outcome.exit_code}:\n{output}")
         return outcome
+
+
+def _redact(text: str, url: str) -> str:
+    """Скрывает логин и пароль из ``url`` (``https://user:pass@host``) в тексте.
+
+    Адрес без пароля (``ssh://git@host``) секретов не содержит и не меняется.
+    """
+    parts = urlsplit(url)
+    if parts.password is None:
+        return text
+    userinfo = parts.netloc.rpartition("@")[0]
+    return text.replace(f"{userinfo}@", "***@")
 
 
 def _refspec(branch: str) -> str:

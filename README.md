@@ -43,12 +43,12 @@ max_parallel = 1              # прогонов одновременно (в о
 dry_run = false
 
 [bitbucket]
-url = "https://bitbucket.example.com"
+url = "https://bitbucket.example.com"   # только https (http:// — лишь для localhost)
 token_env = "BITBUCKET_TOKEN" # из какой переменной окружения читать токен
 user = ""                     # slug пользователя; пусто — по заголовку X-AUSERNAME
 
 [dashboard]
-host = "127.0.0.1"
+host = "127.0.0.1"            # только loopback: у дашборда нет входа
 port = 8765
 public_url = ""               # адрес для ссылок в комментариях (по умолчанию http://host:port)
 
@@ -120,7 +120,7 @@ git diff "$MERGE_BASE" HEAD > "$GR_ARTIFACTS/diff.patch"
 gigacrew --mode plan -p "Изучи дифф $GR_ARTIFACTS/diff.patch ($SOURCE_BRANCH → $TARGET_BRANCH). Найди, что эти изменения могут сломать в остальном коде и что автор мог упустить. Ответь только JSON-массивом [{\"text\": \"...\", \"path\": \"файл\", \"line\": 1}], без проблем — []."
 '''
 validate = '''python3 -c 'import json, re, sys
-found = re.search(r"\\[.*\\]", sys.stdin.read(), re.S)
+found = re.search(r"\[.*\]", sys.stdin.read(), re.S)
 sys.exit(2 if found is None else int(bool(json.loads(found.group()))))'
 '''
 ```

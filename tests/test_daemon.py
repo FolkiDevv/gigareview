@@ -1,4 +1,5 @@
 import asyncio
+import sqlite3
 from pathlib import Path
 
 import pytest
@@ -123,6 +124,46 @@ def test_daemon_runs_reviews_end_to_end(tmp_path: Path, store: Store, origin: Or
     messages = [event.message for event in store.events.list()]
     assert "Демон остановлен" in messages
     assert any("Прерванных" in message for message in messages)
+
+
+def test_poll_loop_survives_unexpected_errors(tmp_path: Path, store: Store) -> None:
+    api = FakeBitbucket(list_error=RuntimeError("bad payload"))
+    daemon = _daemon(tmp_path, store, "unused", api, interval=0.002)
+
+    async def scenario() -> None:
+        await daemon.start()
+        await asyncio.sleep(0.3)
+        assert daemon.status().running
+        await daemon.stop()
+
+    asyncio.run(scenario())
+    assert "bad payload" in daemon.status().last_error
+    assert store.events.count(EventLevel.ERROR) >= 2
+
+
+def test_worker_survives_store_failure(
+    tmp_path: Path,
+    store: Store,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def broken(run_id: int) -> None:
+        raise sqlite3.OperationalError("disk I/O error")
+
+    monkeypatch.setattr(store.runs, "mark_running", broken)
+    daemon = _daemon(tmp_path, store, "unused", FakeBitbucket())
+
+    async def scenario() -> None:
+        await daemon.start()
+        daemon.set_paused(paused=True)
+        daemon.enqueue(make_pr(1), Trigger.MANUAL)
+        daemon.enqueue(make_pr(2), Trigger.MANUAL)
+        await asyncio.wait_for(daemon.wait_idle(), timeout=5)
+        assert daemon.status().active_runs == ()
+        await daemon.stop()
+
+    asyncio.run(scenario())
+    errors = [event.message for event in store.events.list(EventLevel.ERROR)]
+    assert sum("disk I/O error" in message for message in errors) == 2
 
 
 def test_paused_daemon_does_not_poll(tmp_path: Path, store: Store) -> None:

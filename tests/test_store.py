@@ -1,3 +1,4 @@
+from dataclasses import replace
 from datetime import timedelta
 from pathlib import Path
 
@@ -71,18 +72,25 @@ def test_scenario_results_roundtrip(store: Store) -> None:
 
 
 def test_should_skip(store: Store) -> None:
-    assert not store.runs.should_skip("PROJ", "repo", 1, "abc")
+    assert not store.runs.should_skip("PROJ", "repo", 1, "abc", dry_run=False)
     interrupted = store.runs.create(_new())
     store.runs.finish(interrupted, RunStatus.INTERRUPTED)
-    assert not store.runs.should_skip("PROJ", "repo", 1, "abc")
+    assert not store.runs.should_skip("PROJ", "repo", 1, "abc", dry_run=False)
     for _ in range(2):
         store.runs.finish(store.runs.create(_new()), RunStatus.ERROR)
-    assert not store.runs.should_skip("PROJ", "repo", 1, "abc")
+    assert not store.runs.should_skip("PROJ", "repo", 1, "abc", dry_run=False)
     store.runs.finish(store.runs.create(_new()), RunStatus.ERROR)
-    assert store.runs.should_skip("PROJ", "repo", 1, "abc")
+    assert store.runs.should_skip("PROJ", "repo", 1, "abc", dry_run=False)
     store.runs.create(_new(commit="def"))
-    assert store.runs.should_skip("PROJ", "repo", 1, "def")
-    assert not store.runs.should_skip("PROJ", "repo", 2, "def")
+    assert store.runs.should_skip("PROJ", "repo", 1, "def", dry_run=False)
+    assert not store.runs.should_skip("PROJ", "repo", 2, "def", dry_run=False)
+
+
+def test_dry_runs_do_not_block_real_runs(store: Store) -> None:
+    run_id = store.runs.create(replace(_new(), dry_run=True))
+    store.runs.finish(run_id, RunStatus.ISSUES)
+    assert not store.runs.should_skip("PROJ", "repo", 1, "abc", dry_run=False)
+    assert store.runs.should_skip("PROJ", "repo", 1, "abc", dry_run=True)
 
 
 def test_interrupt_active(store: Store) -> None:

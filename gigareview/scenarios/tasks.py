@@ -2,8 +2,16 @@
 
 import json
 from dataclasses import dataclass
+from typing import Annotated
 
-from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    StringConstraints,
+    TypeAdapter,
+    ValidationError,
+)
 
 __all__ = ["Task", "parse_tasks"]
 
@@ -22,7 +30,7 @@ class _TaskModel(BaseModel):
 
     model_config = ConfigDict(extra="ignore")
 
-    text: str = Field(min_length=1)
+    text: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
     path: str | None = None
     line: int | None = Field(default=None, ge=1)
 
@@ -47,7 +55,7 @@ def parse_tasks(text: str) -> tuple[Task, ...]:
         models = _TASKS.validate_python(parsed)
     except ValidationError as error:
         raise ValueError(f"неверный список тасок: {error}") from error
-    return tuple(Task(model.text.strip(), model.path or None, model.line) for model in models)
+    return tuple(Task(model.text, model.path or None, model.line) for model in models)
 
 
 def _json_fragment(text: str) -> str:

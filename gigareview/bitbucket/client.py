@@ -158,7 +158,14 @@ class BitbucketClient:
         response = await self._send(method, path, **kwargs)
         if not response.content:
             return {}
-        parsed: dict[str, Any] = response.json()
+        try:
+            parsed: dict[str, Any] = response.json()
+        except ValueError as error:
+            body = response.text[:_ERROR_BODY_CHARS]
+            raise BitbucketError(
+                f"{method} {path}: ответ не JSON: {body}",
+                status_code=response.status_code,
+            ) from error
         return parsed
 
     async def _send(self, method: str, path: str, **kwargs: Any) -> httpx.Response:

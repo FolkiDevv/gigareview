@@ -63,6 +63,16 @@ def test_bad_clone_url_is_git_error(tmp_path: Path) -> None:
         _checkout(repo, "abc")
 
 
+def test_credentials_are_redacted(tmp_path: Path) -> None:
+    url = f"file://user:s3cret@localhost{tmp_path}/missing.git"
+    repo = GitRepo(tmp_path / "repo", url)
+    with pytest.raises(GitError) as caught:
+        _checkout(repo, "abc")
+    assert "s3cret" not in str(caught.value)
+    assert "s3cret" not in repo.log
+    assert "***@localhost" in repo.log
+
+
 def test_timeout_is_git_error(tmp_path: Path, origin: Origin) -> None:
     repo = GitRepo(tmp_path / "repo", origin.url, timeout=0.0001)
     with pytest.raises(GitError, match="не уложилась"):

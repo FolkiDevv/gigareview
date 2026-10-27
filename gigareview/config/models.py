@@ -1,10 +1,12 @@
 """Модели конфигурации: демон, Bitbucket, Web Dashboard, сценарии и репозитории."""
 
 import hashlib
+import ipaddress
 import json
 from enum import StrEnum, unique
 from pathlib import Path
 from typing import Self
+from urllib.parse import urlsplit
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -64,6 +66,18 @@ class Scenario(_Model):
             is_ai = self.kind is ScenarioKind.AI
             minutes = _AI_TIMEOUT_MINUTES if is_ai else _SIMPLE_TIMEOUT_MINUTES
         return minutes * _SECONDS_IN_MINUTE
+
+
+def _is_loopback(host: str | None) -> bool:
+    """``host`` — локальный адрес (localhost или loopback-IP)."""
+    if not host:
+        return False
+    if host.casefold() == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(host.strip("[]")).is_loopback
+    except ValueError:
+        return False
 
 
 def _named(scenarios: dict[str, Scenario]) -> dict[str, Scenario]:
@@ -128,6 +142,15 @@ class BitbucketSettings(_Model):
     token_env: str = "BITBUCKET_TOKEN"  # noqa: S105
     user: str = ""
 
+    @field_validator("url", mode="after")
+    @classmethod
+    def _require_https(cls, url: str) -> str:
+        parts = urlsplit(url)
+        # Токен уходит в заголовке Authorization: по HTTP — только на свою машину.
+        if parts.scheme == "https" or (parts.scheme == "http" and _is_loopback(parts.hostname)):
+            return url
+        raise ValueError("нужен адрес https:// (http:// — только для localhost)")
+
 
 class DashboardSettings(_Model):
     """Адрес Web Dashboard; ``public_url`` — для ссылок в комментариях Bitbucket."""
@@ -140,6 +163,14 @@ class DashboardSettings(_Model):
     def base_url(self) -> str:
         """Адрес для ссылок: ``public_url`` или ``http://host:port``."""
         return (self.public_url or f"http://{self.host}:{self.port}").rstrip("/")
+
+    @field_validator("host", mode="after")
+    @classmethod
+    def _require_loopback(cls, host: str) -> str:
+        # У Web Dashboard нет входа: выводы сценариев и кнопки видны всем, кто достучится.
+        if _is_loopback(host):
+            return host
+        raise ValueError("Web Dashboard без аутентификации слушает только localhost")
 
 
 class Config(_Model):

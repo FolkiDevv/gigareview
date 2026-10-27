@@ -73,7 +73,7 @@ class FakeBitbucket:
     resolved: list[int] = field(default_factory=list)
     statuses: list[tuple[int, ReviewStatus]] = field(default_factory=list)
     slug_error: BitbucketError | None = None
-    list_error: BitbucketError | None = None
+    list_error: Exception | None = None
     get_error: Exception | None = None
     resolve_error: BitbucketError | None = None
     overrides: dict[int, PullRequest] = field(default_factory=dict)

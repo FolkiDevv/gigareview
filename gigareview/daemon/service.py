@@ -105,7 +105,13 @@ class Daemon:
         for pr in prs:
             if self.config.find_repo(pr.project, pr.repo) is None:
                 continue
-            if self._store.runs.should_skip(pr.project, pr.repo, pr.id, pr.commit):
+            if self._store.runs.should_skip(
+                pr.project,
+                pr.repo,
+                pr.id,
+                pr.commit,
+                dry_run=self.config.daemon.dry_run,
+            ):
                 continue
             self.enqueue(pr, Trigger.AUTO)
             queued += 1
@@ -176,8 +182,13 @@ class Daemon:
         """Опрос каждые ``interval_minutes`` (или раньше — по :meth:`poll_now`)."""
         while True:
             self._wake.clear()
-            if not self._store.state.get(_PAUSED):
-                await self.poll()
+            try:
+                if not self._store.state.get(_PAUSED):
+                    await self.poll()
+            # Битый ответ Bitbucket или сбой базы не должны навсегда остановить опрос.
+            except Exception as error:
+                self._last_error = f"Опрос Bitbucket: {error!r}"
+                self._event(EventLevel.ERROR, self._last_error)
             interval = self.config.daemon.interval_seconds
             self._next_poll = utc_now() + timedelta(seconds=interval)
             with contextlib.suppress(TimeoutError):
@@ -188,10 +199,13 @@ class Daemon:
         while True:
             job = await self._queue.get()
             pr = job.pr
-            # Reviewer.review сам ловит все ошибки прогона: воркер не падает.
             async with self._locks[f"{pr.project}/{pr.repo}".casefold()]:
                 self._active.add(job.run_id)
-                await self._reviewer.review(job.run_id, pr)
+                try:
+                    await self._reviewer.review(job.run_id, pr)
+                # Сбой вне прогона (например, базы) не должен убивать воркер.
+                except Exception as error:
+                    self._event(EventLevel.ERROR, f"Воркер: {error!r}", job.run_id)
                 self._active.discard(job.run_id)
             self._queue.task_done()
 

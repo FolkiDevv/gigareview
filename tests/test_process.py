@@ -1,4 +1,6 @@
 import asyncio
+import os
+import time
 from pathlib import Path
 
 import pytest
@@ -44,14 +46,40 @@ def test_stdin_and_separate_stderr(tmp_path: Path) -> None:
     assert outcome.stderr == "oops\n"
 
 
+def _assert_gone(pid_file: Path) -> None:
+    """Процесс из ``pid_file`` завершён (ядро снимает его не мгновенно — ждём до 5 с)."""
+    pid = int(pid_file.read_text(encoding="utf-8"))
+    for _ in range(50):
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return
+        time.sleep(0.1)
+    pytest.fail(f"процесс {pid} пережил остановку")
+
+
 def test_timeout_kills_process_group(tmp_path: Path) -> None:
-    marker = tmp_path / "marker"
-    script = f"(sleep 1; touch {marker}) & sleep 30"
-    outcome = asyncio.run(process.run_process(("bash", "-c", script), cwd=tmp_path, time_limit=0.3))
+    pid_file = tmp_path / "child.pid"
+    script = f"sleep 30 & echo $! > {pid_file}; wait"
+    outcome = asyncio.run(process.run_process(("bash", "-c", script), cwd=tmp_path, time_limit=0.5))
     assert outcome.timed_out
     assert outcome.exit_code is None
-    asyncio.run(asyncio.sleep(1.2))
-    assert not marker.exists()
+    _assert_gone(pid_file)
+
+
+def test_endless_output_keeps_memory_bounded(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(process, "MAX_OUTPUT_CHARS", 5)
+    outcome = _run("bash", "-c", "yes | head -c 50000000", cwd=tmp_path)
+    assert outcome.exit_code == 0
+    assert outcome.output == "y\ny\ny\n… (вывод обрезан)"
+
+
+def test_process_ignoring_stdin(tmp_path: Path) -> None:
+    outcome = _run("bash", "-c", "exec 0<&-; echo done", cwd=tmp_path, stdin_text="x" * 1_000_000)
+    assert outcome.output == "done\n"
 
 
 def test_long_output_is_truncated(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -69,13 +97,17 @@ def test_subprocess_env_hides_secrets(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_cancel_kills_process(tmp_path: Path) -> None:
+    pid_file = tmp_path / "child.pid"
+    script = f"sleep 30 & echo $! > {pid_file}; wait"
+
     async def scenario() -> None:
         task = asyncio.create_task(
-            process.run_process(("bash", "-c", "sleep 30"), cwd=tmp_path, time_limit=60),
+            process.run_process(("bash", "-c", script), cwd=tmp_path, time_limit=60),
         )
-        await asyncio.sleep(0.2)
+        await asyncio.sleep(0.3)
         task.cancel()
         with pytest.raises(asyncio.CancelledError):
             await task
 
     asyncio.run(asyncio.wait_for(scenario(), timeout=5))
+    _assert_gone(pid_file)

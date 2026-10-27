@@ -204,6 +204,15 @@ def test_http_error_carries_status() -> None:
     assert caught.value.status_code == 500
 
 
+def test_invalid_json_is_bitbucket_error() -> None:
+    with pytest.raises(BitbucketError, match="не JSON") as caught:
+        _run(
+            lambda request: httpx.Response(200, text="<html>"),
+            lambda client: client.list_review_prs(),
+        )
+    assert caught.value.status_code == 200
+
+
 def test_network_error() -> None:
     def responder(request: httpx.Request) -> httpx.Response:
         raise httpx.ConnectError("refused", request=request)

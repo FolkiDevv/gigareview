@@ -94,6 +94,36 @@ def test_unknown_exclude_is_rejected() -> None:
         )
 
 
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://bb.example.com",
+        "http://127.0.0.1:7990",
+        "http://localhost:7990",
+        "http://[::1]:7990",
+    ],
+)
+def test_bitbucket_url_accepts_https_and_local_http(url: str) -> None:
+    assert _config(bitbucket={"url": url}).bitbucket.url == url
+
+
+@pytest.mark.parametrize("url", ["http://bb.example.com", "ftp://bb.example.com"])
+def test_bitbucket_url_rejects_plain_http(url: str) -> None:
+    with pytest.raises(ValueError, match="https"):
+        _config(bitbucket={"url": url})
+
+
+@pytest.mark.parametrize("host", ["127.0.0.1", "::1", "localhost"])
+def test_dashboard_host_accepts_loopback(host: str) -> None:
+    assert _config(dashboard={"host": host}).dashboard.host == host
+
+
+@pytest.mark.parametrize("host", ["10.0.0.5", "box.lan", ""])
+def test_dashboard_host_rejects_network(host: str) -> None:
+    with pytest.raises(ValueError, match="localhost"):
+        _config(dashboard={"host": host})
+
+
 def test_dashboard_base_url() -> None:
     assert _config().dashboard.base_url == "http://127.0.0.1:8765"
     assert _config(dashboard={"public_url": "http://box:1/"}).dashboard.base_url == "http://box:1"

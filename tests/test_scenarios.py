@@ -159,7 +159,10 @@ def test_parse_tasks(text: str, expected: tuple[Task, ...]) -> None:
     assert parse_tasks(text) == expected
 
 
-@pytest.mark.parametrize("text", ["no brackets", "[1, 2]", '[{"text": ""}]', "[{]"])
+@pytest.mark.parametrize(
+    "text",
+    ["no brackets", "[1, 2]", '[{"text": ""}]', '[{"text": "  "}]', "[{]"],
+)
 def test_parse_tasks_rejects_garbage(text: str) -> None:
     with pytest.raises(ValueError, match=r"JSON|тасок"):
         parse_tasks(text)
