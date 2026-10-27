@@ -8,7 +8,7 @@ from types import MappingProxyType
 
 from gigareview.config import Scenario, ScenarioKind
 from gigareview.process import ProcessOutcome, run_process
-from gigareview.scenarios.tasks import Task, parse_tasks
+from gigareview.scenarios.tasks import ReviewDocument, Task, parse_review
 from gigareview.statuses import Outcome
 
 __all__ = ["ScenarioContext", "ScenarioReport", "run_scenario"]
@@ -30,7 +30,11 @@ class ScenarioContext:
 
 @dataclass(frozen=True, slots=True)
 class ScenarioReport:
-    """Итог сценария: исход, результаты шагов, таски и текст ошибки."""
+    """Итог сценария: исход, результаты шагов, таски и текст ошибки.
+
+    ``resolved`` — прошлые таски, которые инкрементальный сценарий считает закрытыми;
+    ``kept`` — сколько его прошлых тасок остаются открытыми (считает пайплайн).
+    """
 
     scenario: Scenario
     outcome: Outcome
@@ -40,6 +44,8 @@ class ScenarioReport:
     formatting: ProcessOutcome | None = None
     tasks: tuple[Task, ...] = ()
     error: str = ""
+    resolved: tuple[int, ...] = ()
+    kept: int = 0
 
 
 @dataclass(slots=True)
@@ -90,12 +96,15 @@ class _Runner:
                 steps,
                 f"валидация вернула код {code}: сценарий отработал некорректно",
             )
-        if outcome is Outcome.PASSED:
+        if outcome is Outcome.PASSED and not self._scenario.incremental:
             return self._report(steps, Outcome.PASSED)
-        return await self._issues(steps)
+        return await self._document(steps, outcome)
 
-    async def _issues(self, steps: _Steps) -> ScenarioReport:
-        """Замечания найдены: текст тасок — вывод форматирования или основных команд."""
+    async def _document(self, steps: _Steps, outcome: Outcome) -> ScenarioReport:
+        """Итог: вывод форматирования или основных команд → таски и закрытые прошлые таски.
+
+        Инкрементальному сценарию итог нужен и без замечаний — в нём список ``resolved``.
+        """
         text = steps.run.output
         if self._scenario.format_script:
             steps.formatting = await self._step(
@@ -107,19 +116,28 @@ class _Runner:
                 return self._failed(steps, _format_error(steps.formatting))
             text = steps.formatting.output
         try:
-            tasks = self._tasks(text)
+            document = self._parse(text)
         except ValueError as error:
             return self._failed(steps, f"не удалось разобрать таски: {error}")
-        return self._report(steps, Outcome.ISSUES, tasks=tasks)
+        if outcome is Outcome.PASSED:
+            return self._report(steps, Outcome.PASSED, resolved=document.resolved)
+        if not document.tasks:
+            return self._failed(
+                steps,
+                "не удалось разобрать таски: валидация нашла замечания, а список тасок пуст",
+            )
+        return self._report(
+            steps,
+            Outcome.ISSUES,
+            tasks=document.tasks,
+            resolved=document.resolved,
+        )
 
-    def _tasks(self, text: str) -> tuple[Task, ...]:
-        """Таски из текста: весь текст — одна таска, у ИИ-сценария — JSON-список."""
+    def _parse(self, text: str) -> ReviewDocument:
+        """Итог из текста: весь текст — одна таска, у ИИ-сценария — JSON."""
         if self._scenario.kind is ScenarioKind.SIMPLE:
-            return (Task(text.strip() or _EMPTY_OUTPUT),)
-        tasks = parse_tasks(text)
-        if not tasks:
-            raise ValueError("валидация нашла замечания, а список тасок пуст")
-        return tasks
+            return ReviewDocument((Task(text.strip() or _EMPTY_OUTPUT),))
+        return parse_review(text)
 
     async def _step(
         self,
@@ -150,6 +168,7 @@ class _Runner:
         *,
         tasks: tuple[Task, ...] = (),
         error: str = "",
+        resolved: tuple[int, ...] = (),
     ) -> ScenarioReport:
         return ScenarioReport(
             scenario=self._scenario,
@@ -160,6 +179,7 @@ class _Runner:
             formatting=steps.formatting,
             tasks=tasks,
             error=error,
+            resolved=resolved,
         )
 
     def _failed(self, steps: _Steps, error: str) -> ScenarioReport:

@@ -7,7 +7,7 @@ from collections.abc import Sequence
 from importlib import metadata
 from pathlib import Path
 
-from gigareview.cli import commands
+from gigareview.cli import ai_review, commands
 from gigareview.config import Config, default_config_path, load_config
 from gigareview.errors import GigaReviewError
 
@@ -44,12 +44,15 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("check-config", help="Проверить конфигурацию")
     init = sub.add_parser("init-config", help="Записать пример конфигурации")
     init.add_argument("--force", action="store_true", help="Перезаписать существующий файл")
+    ai_review.add_parser(sub)
     return parser
 
 
 def main(argv: Sequence[str] | None = None) -> int:
     """Точка входа: код выхода 0 — успех, 1 — замечания/предупреждения, 2 — ошибка."""
     args = build_parser().parse_args(argv)
+    if args.command == "ai-review":
+        return ai_review.run(args)
     path: Path = args.config or default_config_path()
     try:
         if args.command == "init-config":

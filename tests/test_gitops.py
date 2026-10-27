@@ -77,3 +77,15 @@ def test_timeout_is_git_error(tmp_path: Path, origin: Origin) -> None:
     repo = GitRepo(tmp_path / "repo", origin.url, timeout=0.0001)
     with pytest.raises(GitError, match="не уложилась"):
         _checkout(repo, origin.feature)
+
+
+def test_is_ancestor(tmp_path: Path, origin: Origin) -> None:
+    repo = GitRepo(tmp_path / "repo", origin.url)
+    _checkout(repo, origin.feature)
+
+    async def check(ancestor: str, commit: str) -> bool:
+        return await repo.is_ancestor(ancestor, commit)
+
+    assert asyncio.run(check(origin.master, origin.feature))
+    assert not asyncio.run(check(origin.feature, origin.master))
+    assert not asyncio.run(check("0" * 40, origin.feature))

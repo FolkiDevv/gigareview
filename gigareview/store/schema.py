@@ -77,5 +77,12 @@ CREATE TABLE daemon_state (
 );
 """
 
+# Текст и привязка таски: инкрементальный сценарий получает открытые таски прошлых прогонов.
+_TASK_DETAILS = """
+ALTER TABLE bb_comments ADD COLUMN text TEXT NOT NULL DEFAULT '';
+ALTER TABLE bb_comments ADD COLUMN path TEXT;
+ALTER TABLE bb_comments ADD COLUMN line INTEGER;
+"""
+
 #: Миграции по порядку: i-я переводит базу с версии i на i + 1.
-MIGRATIONS: tuple[str, ...] = (_INITIAL,)
+MIGRATIONS: tuple[str, ...] = (_INITIAL, _TASK_DETAILS)

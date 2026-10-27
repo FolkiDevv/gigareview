@@ -1,12 +1,15 @@
 import asyncio
 import json
+import os
 import sqlite3
+import tomllib
 from pathlib import Path
 from typing import Any
 
 import pytest
-from fakes import FakeBitbucket, Origin, make_config, make_pr
+from fakes import FakeBitbucket, Origin, git, make_config, make_pr
 
+from gigareview.config import SAMPLE_CONFIG
 from gigareview.errors import BitbucketError
 from gigareview.pipeline import Reviewer, new_run
 from gigareview.statuses import EventLevel, Outcome, ReviewStatus, RunStatus, Trigger
@@ -156,7 +159,10 @@ def test_scenario_environment(
         'test -z "${GR_TEST_TOKEN:-}" && test "$TARGET_BRANCH" = master '
         f'&& test "$MERGE_BASE" = {origin.master} && test "$PR_ID" = 1 '
         '&& test "$SOURCE_BRANCH" = feature && test -d "$GR_ARTIFACTS" '
-        '&& test "$GR_REPO_DIR" = "$PWD" && test "$PR_PROJECT/$PR_REPO" = PROJ/repo'
+        '&& test "$GR_REPO_DIR" = "$PWD" && test "$PR_PROJECT/$PR_REPO" = PROJ/repo '
+        '&& test "$PR_TITLE" = "PR 1" && test "$PR_AUTHOR" = Автор && test -z "$PR_DESCRIPTION" '
+        '&& "$GIGAREVIEW" --version && test -z "$GR_PREV_COMMIT" '
+        '&& test "$(cat "$GR_OPEN_TASKS")" = "[]"'
     )
     run, _ = _review(tmp_path, store, origin, scenarios={"env": {"run": check}})
     assert run.status is RunStatus.PASSED, store.runs.scenarios(run.id)[0].run_output
@@ -233,3 +239,118 @@ def test_cancellation_marks_interrupted(tmp_path: Path, store: Store, origin: Or
     run = store.runs.get(run_id)
     assert run is not None
     assert run.status is RunStatus.INTERRUPTED
+
+
+def _incremental(run: str) -> dict[str, Any]:
+    return {"ai": {"kind": "ai", "incremental": True, "run": run}}
+
+
+def test_incremental_scenario_keeps_tasks_until_resolved(
+    tmp_path: Path,
+    store: Store,
+    origin: Origin,
+) -> None:
+    first = '{"tasks": [{"text": "one", "path": "app.py", "line": 1}, {"text": "two"}]}'
+    _, api = _review(tmp_path, store, origin, scenarios=_incremental(f"echo '{first}'; exit 1"))
+    one, two = (task.id for task in api.tasks)
+    open_tasks = store.comments.open_tasks("PROJ", "repo", 1, "ai")
+    assert [(task.details.text, task.details.path, task.details.line) for task in open_tasks] == [
+        ("one", "app.py", 1),
+        ("two", None, None),
+    ]
+    check = f'grep -q \'"id": {one}\' "$GR_OPEN_TASKS" || exit 2'
+    second = f'{check}; echo \'{{"tasks": [], "resolved": [{one}, 999]}}\''
+    run, api = _review(tmp_path, store, origin, api=api, scenarios=_incremental(second))
+    assert run.status is RunStatus.ISSUES
+    assert api.resolved == [one]
+    assert api.statuses[-1] == (1, ReviewStatus.NEEDS_WORK)
+    assert "открыто прежних 1, закрыто 1" in api.summaries[-1].text
+    third = f"echo '{{\"resolved\": [{two}]}}'"
+    run, api = _review(tmp_path, store, origin, api=api, scenarios=_incremental(third))
+    assert run.status is RunStatus.PASSED
+    assert api.resolved == [one, two]
+    assert api.statuses[-1] == (1, ReviewStatus.APPROVED)
+
+
+def test_failed_incremental_scenario_resolves_nothing(
+    tmp_path: Path,
+    store: Store,
+    origin: Origin,
+) -> None:
+    first = _incremental('echo \'[{"text": "a"}]\'; exit 1')
+    _, api = _review(tmp_path, store, origin, scenarios=first)
+    broken = "echo '{\"resolved\": [100]}'; exit 2"
+    run, api = _review(tmp_path, store, origin, api=api, scenarios=_incremental(broken))
+    assert run.status is RunStatus.FAILED
+    assert api.resolved == []
+    assert len(store.comments.open_tasks("PROJ", "repo", 1)) == 1
+
+
+def _push(origin: Origin, text: str, *, amend: bool = False) -> str:
+    (origin.work / "app.py").write_text(text)
+    if amend:
+        git("commit", "-q", "--amend", "-am", "rewritten", cwd=origin.work)
+    else:
+        git("commit", "-q", "-am", "next", cwd=origin.work)
+    git("push", "-q", "--force", origin.url, "feature", cwd=origin.work)
+    return git("rev-parse", "HEAD", cwd=origin.work)
+
+
+def test_next_commit_gets_previous_review_commit(
+    tmp_path: Path,
+    store: Store,
+    origin: Origin,
+) -> None:
+    scenarios = _incremental(r'echo "prev=$GR_PREV_COMMIT"; echo "{\"tasks\": []}"')
+    run, api = _review(tmp_path, store, origin, scenarios=scenarios)
+    assert "prev=\n" in store.runs.scenarios(run.id)[0].run_output
+    second = _push(origin, "print('v2')\n")
+    api.prs = [make_pr(commit=second)]
+    run, api = _review(tmp_path, store, origin, api=api, commit=second, scenarios=scenarios)
+    assert f"prev={origin.feature}\n" in store.runs.scenarios(run.id)[0].run_output
+    rewritten = _push(origin, "print('v3')\n", amend=True)
+    api.prs = [make_pr(commit=rewritten)]
+    run, _ = _review(tmp_path, store, origin, api=api, commit=rewritten, scenarios=scenarios)
+    assert "prev=\n" in store.runs.scenarios(run.id)[0].run_output
+
+
+_FAKE_GIGACREW = """\
+#!/bin/bash
+case "$*" in *"Full review"*) ;; *) echo "unexpected prompt"; exit 1 ;; esac
+echo "● read_file app.py [1-1]"
+cat <<'ANSWER'
+Готово.
+```json
+{"findings": [
+  {"path": "app.py", "line": 1, "severity": "critical", "title": "Сломан вывод",
+   "body": "Печатает не то", "suggestion": "Вернуть master", "confidence": 95},
+  {"path": "app.py", "line": 1, "severity": "minor", "title": "Мелочь", "confidence": 99}
+], "resolved": []}
+```
+ANSWER
+"""
+
+
+def test_sample_ai_review_with_fake_gigacrew(
+    tmp_path: Path,
+    store: Store,
+    origin: Origin,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    fake = bin_dir / "gigacrew"
+    fake.write_text(_FAKE_GIGACREW)
+    fake.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ['PATH']}")
+    sample = tomllib.loads(SAMPLE_CONFIG)["scenarios"]["ai-review"]
+    run, api = _review(tmp_path, store, origin, scenarios={"ai-review": sample})
+    records = store.runs.scenarios(run.id)
+    assert run.status is RunStatus.ISSUES, records[0]
+    assert len(api.tasks) == 1
+    task = api.tasks[0]
+    assert "**🔴 Критично: Сломан вывод**" in task.text
+    assert "**Как исправить:** Вернуть master" in task.text
+    assert task.anchor is not None
+    assert (task.anchor.path, task.anchor.line) == ("app.py", 1)
+    assert "к публикации: 1" in records[0].validate_output

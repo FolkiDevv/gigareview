@@ -17,6 +17,7 @@ from gigareview.scenarios import (
     task_text,
 )
 from gigareview.scenarios import report as report_module
+from gigareview.scenarios.tasks import parse_review
 from gigareview.statuses import Outcome, RunStatus
 
 
@@ -214,3 +215,49 @@ def test_summary_text() -> None:
     assert "нужны изменения" in text
     assert "(http://x/runs/1)" in text
     assert "Подробности" not in summary_text(reports, commit="c", run_url="")
+
+
+def test_incremental_scenario_reads_resolved_without_issues(tmp_path: Path) -> None:
+    report = _run(
+        tmp_path,
+        kind="ai",
+        incremental=True,
+        run='echo \'{"tasks": [{"text": "x"}], "resolved": [3, 3, 4]}\'',
+        format="cat",
+    )
+    assert report.outcome is Outcome.PASSED
+    assert report.tasks == ()
+    assert report.resolved == (3, 4)
+    assert report.formatting is not None
+
+
+def test_incremental_scenario_bad_document_is_error(tmp_path: Path) -> None:
+    report = _run(tmp_path, kind="ai", incremental=True, run="echo nothing")
+    assert report.outcome is Outcome.ERROR
+    assert "таски" in report.error
+
+
+def test_parse_review_with_resolved() -> None:
+    document = parse_review('{"tasks": [{"text": "a"}], "resolved": [1, 2, 1]}')
+    assert document.tasks == (Task("a"),)
+    assert document.resolved == (1, 2)
+    assert parse_review('{"resolved": [7]}').tasks == ()
+    assert parse_review('[{"text": "b"}]').resolved == ()
+    with pytest.raises(ValueError, match="тасок"):
+        parse_review('{"tasks": [], "resolved": ["x"]}')
+
+
+def test_summary_text_incremental_counts() -> None:
+    def incremental(outcome: Outcome, **fields: Any) -> ScenarioReport:
+        scenario = _scenario(run="x", kind="ai", title="ИИ", incremental=True)
+        return ScenarioReport(scenario, outcome, ProcessOutcome(0, "", "", 0.1), 0.1, **fields)
+
+    reports = [
+        incremental(Outcome.ISSUES, tasks=(Task("a"),), kept=2, resolved=(5,)),
+        incremental(Outcome.PASSED, resolved=(6,)),
+        incremental(Outcome.PASSED),
+    ]
+    text = summary_text(reports, commit="c", run_url="")
+    assert "| ИИ | ❌ замечания: новых 1, открыто прежних 2, закрыто 1 |" in text
+    assert "| ИИ | ✅ пройден: закрыто 1 |" in text
+    assert "| ИИ | ✅ пройден |" in text

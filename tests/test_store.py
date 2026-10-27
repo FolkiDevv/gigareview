@@ -1,10 +1,13 @@
+import sqlite3
+from contextlib import closing
 from dataclasses import replace
 from datetime import timedelta
 from pathlib import Path
 
 from gigareview.statuses import EventLevel, Outcome, RunStatus, Trigger
-from gigareview.store import CommentKind, NewRun, RunFilter, ScenarioRecord, Store
+from gigareview.store import CommentKind, NewRun, RunFilter, ScenarioRecord, Store, TaskDetails
 from gigareview.store.clock import utc_now
+from gigareview.store.schema import MIGRATIONS
 
 
 def _new(pr_id: int = 1, commit: str = "abc", repo: str = "repo") -> NewRun:
@@ -193,3 +196,46 @@ def test_reopen_keeps_data_and_schema(tmp_path: Path) -> None:
 def test_in_memory_database() -> None:
     with Store(Path(":memory:")) as memory:
         assert memory.runs.create(_new()) == 1
+
+
+def test_comment_details_and_scenario_filter(store: Store) -> None:
+    run_id = store.runs.create(_new())
+    store.comments.add(run_id, 10, 0, CommentKind.TASK, "ai", TaskDetails("text", "a.py", 3))
+    store.comments.add(run_id, 11, 0, CommentKind.TASK, "lint")
+    ai_tasks = store.comments.open_tasks("PROJ", "repo", 1, "ai")
+    assert [task.details for task in ai_tasks] == [TaskDetails("text", "a.py", 3)]
+    assert len(store.comments.open_tasks("PROJ", "repo", 1)) == 2
+    lint = store.comments.open_tasks("PROJ", "repo", 1, "lint")[0]
+    assert lint.details == TaskDetails("")
+
+
+def _reviewed(store: Store, commit: str, outcome: Outcome, *, published: bool = True) -> None:
+    run_id = store.runs.create(_new(commit=commit))
+    store.runs.add_scenario(run_id, 0, _scenario("ai", outcome))
+    if published:
+        store.comments.add(run_id, 1, 0, CommentKind.SUMMARY)
+
+
+def test_last_reviewed_commit(store: Store) -> None:
+    def last(current: str = "now", scenario: str = "ai") -> str | None:
+        return store.runs.last_reviewed_commit("PROJ", "repo", 1, scenario, other_than=current)
+
+    assert last() is None
+    _reviewed(store, "first", Outcome.ISSUES)
+    _reviewed(store, "second", Outcome.PASSED)
+    _reviewed(store, "broken", Outcome.ERROR)
+    _reviewed(store, "dry", Outcome.PASSED, published=False)
+    _reviewed(store, "now", Outcome.PASSED)
+    assert last() == "second"
+    assert last("other") == "now"
+    assert last(scenario="lint") is None
+
+
+def test_migration_adds_task_details(tmp_path: Path) -> None:
+    path = tmp_path / "old.sqlite3"
+    with closing(sqlite3.connect(path)) as old:
+        old.executescript(f"{MIGRATIONS[0]}\nPRAGMA user_version = 1;")
+    with Store(path) as store:
+        run_id = store.runs.create(_new())
+        store.comments.add(run_id, 5, 0, CommentKind.TASK, "ai", TaskDetails("t", None, 2))
+        assert store.comments.open_tasks("PROJ", "repo", 1)[0].details.line == 2

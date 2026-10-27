@@ -80,10 +80,24 @@ def _summary_row(report: ScenarioReport) -> str:
 def _outcome_label(report: ScenarioReport) -> str:
     """Ячейка результата: исход, число тасок или текст ошибки."""
     label = _OUTCOME_LABELS[report.outcome]
-    if report.outcome is Outcome.ISSUES:
-        count = len(report.tasks)
-        return f"{label}: {count}"
     if report.outcome is Outcome.ERROR:
         error = " ".join(report.error.split()).replace("|", r"\|")
         return f"{label}: {error}"
-    return label
+    if not report.scenario.incremental:
+        if report.outcome is Outcome.ISSUES:
+            return f"{label}: {len(report.tasks)}"
+        return label
+    counts = _incremental_counts(report)
+    return f"{label}: {counts}" if counts else label
+
+
+def _incremental_counts(report: ScenarioReport) -> str:
+    """Новые, оставшиеся открытыми и закрытые таски инкрементального сценария."""
+    parts = []
+    if report.tasks:
+        parts.append(f"новых {len(report.tasks)}")
+    if report.kept:
+        parts.append(f"открыто прежних {report.kept}")
+    if report.resolved:
+        parts.append(f"закрыто {len(report.resolved)}")
+    return ", ".join(parts)

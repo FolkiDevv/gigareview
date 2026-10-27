@@ -1,5 +1,6 @@
 """Подготовка рабочей копии PR: клон, ветка PR, команда init, окружение сценариев."""
 
+import sys
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -10,10 +11,20 @@ from gigareview.errors import SetupError
 from gigareview.gitops import GitRepo
 from gigareview.process import run_process
 
-__all__ = ["INIT_TIMEOUT", "Workspace", "prepare_workspace", "repo_dir", "scenario_env"]
+__all__ = [
+    "INIT_TIMEOUT",
+    "Workspace",
+    "gigareview_command",
+    "prepare_workspace",
+    "repo_dir",
+    "scenario_env",
+]
 
 #: Таймаут команды init (``uv sync`` на холодном кеше бывает долгим), секунды.
 INIT_TIMEOUT = 1800.0
+
+#: Описание PR в окружении сценария — не длиннее (у Bitbucket до 32 тыс. символов).
+MAX_DESCRIPTION_CHARS = 16_000
 
 
 @dataclass(frozen=True, slots=True)
@@ -67,7 +78,20 @@ def scenario_env(pr: PullRequest, workspace: Workspace, artifacts: Path) -> dict
         "PR_PROJECT": pr.project,
         "PR_REPO": pr.repo,
         "PR_COMMIT": pr.commit,
+        "PR_TITLE": pr.title,
+        "PR_DESCRIPTION": pr.description[:MAX_DESCRIPTION_CHARS],
+        "PR_AUTHOR": pr.author_name,
         "MERGE_BASE": workspace.merge_base,
         "GR_REPO_DIR": str(workspace.repo_dir),
         "GR_ARTIFACTS": str(artifacts),
+        "GIGAREVIEW": gigareview_command(),
     }
+
+
+def gigareview_command() -> str:
+    """Команда gigareview для сценариев: скрипт рядом с интерпретатором демона или из PATH.
+
+    В PATH сценария может оказаться venv проверяемого проекта (после ``uv sync``).
+    """
+    script = Path(sys.executable).parent / "gigareview"
+    return str(script) if script.is_file() else "gigareview"

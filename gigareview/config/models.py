@@ -5,7 +5,7 @@ import ipaddress
 import json
 from enum import StrEnum, unique
 from pathlib import Path
-from typing import Self
+from typing import Final, Self
 from urllib.parse import urlsplit
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -26,6 +26,7 @@ _DEFAULT_PORT = 8765
 _SECONDS_IN_MINUTE = 60
 _MAX_PORT = 65535
 _FINGERPRINT_CHARS = 16
+_AFTER: Final = "after"
 
 
 class _Model(BaseModel):
@@ -51,6 +52,8 @@ class Scenario(_Model):
     validate_script: str = Field(default="", alias="validate")
     format_script: str = Field(default="", alias="format")
     kind: ScenarioKind = ScenarioKind.SIMPLE
+    # Инкрементальный ИИ-сценарий: прошлые таски не закрываются сами, их закрывает сценарий.
+    incremental: bool = False
     timeout_minutes: float | None = Field(default=None, gt=0)
 
     @property
@@ -66,6 +69,13 @@ class Scenario(_Model):
             is_ai = self.kind is ScenarioKind.AI
             minutes = _AI_TIMEOUT_MINUTES if is_ai else _SIMPLE_TIMEOUT_MINUTES
         return minutes * _SECONDS_IN_MINUTE
+
+    @model_validator(mode=_AFTER)
+    def _check_incremental(self) -> Self:
+        # Закрыть прошлые таски можно только списком ``resolved`` в JSON ИИ-сценария.
+        if self.incremental and self.kind is not ScenarioKind.AI:
+            raise ValueError('incremental = true — только для сценариев kind = "ai"')
+        return self
 
 
 def _is_loopback(host: str | None) -> bool:
@@ -109,7 +119,7 @@ class RepoConfig(_Model):
             self.slug.casefold() == slug.casefold()
         )
 
-    @field_validator("scenarios", mode="after")
+    @field_validator("scenarios", mode=_AFTER)
     @classmethod
     def _name_scenarios(cls, scenarios: dict[str, Scenario]) -> dict[str, Scenario]:
         return _named(scenarios)
@@ -142,7 +152,7 @@ class BitbucketSettings(_Model):
     token_env: str = "BITBUCKET_TOKEN"  # noqa: S105
     user: str = ""
 
-    @field_validator("url", mode="after")
+    @field_validator("url", mode=_AFTER)
     @classmethod
     def _require_https(cls, url: str) -> str:
         parts = urlsplit(url)
@@ -165,7 +175,7 @@ class DashboardSettings(_Model):
         host = f"[{self.host}]" if ":" in self.host else self.host
         return (self.public_url or f"http://{host}:{self.port}").rstrip("/")
 
-    @field_validator("host", mode="after")
+    @field_validator("host", mode=_AFTER)
     @classmethod
     def _require_loopback(cls, host: str) -> str:
         # У Web Dashboard нет входа: выводы сценариев и кнопки видны всем, кто достучится.
@@ -206,12 +216,12 @@ class Config(_Model):
         dumped = json.dumps(payload, sort_keys=True, ensure_ascii=False)
         return hashlib.sha256(dumped.encode()).hexdigest()[:_FINGERPRINT_CHARS]
 
-    @field_validator("scenarios", mode="after")
+    @field_validator("scenarios", mode=_AFTER)
     @classmethod
     def _name_scenarios(cls, scenarios: dict[str, Scenario]) -> dict[str, Scenario]:
         return _named(scenarios)
 
-    @model_validator(mode="after")
+    @model_validator(mode=_AFTER)
     def _check_repos(self) -> Self:
         seen: set[tuple[str, str]] = set()
         for repo in self.repos:

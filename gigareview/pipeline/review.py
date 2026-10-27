@@ -1,6 +1,7 @@
 """Прогон ревью одного коммита PR от подготовки копии до публикации итогов."""
 
 import asyncio
+import dataclasses
 import tempfile
 from collections.abc import Sequence
 from pathlib import Path
@@ -8,6 +9,7 @@ from pathlib import Path
 from gigareview.bitbucket import BitbucketApi, PullRequest
 from gigareview.config import Config, RepoConfig, Scenario
 from gigareview.errors import GigaReviewError, SetupError
+from gigareview.pipeline.incremental import history_env, scenario_history, settle
 from gigareview.pipeline.publish import Publisher
 from gigareview.pipeline.workspace import Workspace, prepare_workspace, scenario_env
 from gigareview.process import subprocess_env
@@ -95,11 +97,12 @@ class Reviewer:
                 artifacts,
                 {**env, **scenario_env(pr, workspace, artifacts)},
             )
-            return await self._execute(run_id, scenarios, context)
+            return await self._execute(run_id, pr, scenarios, context)
 
     async def _execute(
         self,
         run_id: int,
+        pr: PullRequest,
         scenarios: Sequence[Scenario],
         context: ScenarioContext,
     ) -> list[ScenarioReport]:
@@ -107,10 +110,22 @@ class Reviewer:
         reports = []
         for position, scenario in enumerate(scenarios):
             # Сценарии идут строго по очереди: они делят одну рабочую копию.
-            report = await run_scenario(scenario, context)  # noqa: WPS476
+            report = await self._run_one(pr, scenario, context)  # noqa: WPS476
             self._store.runs.add_scenario(run_id, position, _record(report))
             reports.append(report)
         return reports
+
+    async def _run_one(
+        self,
+        pr: PullRequest,
+        scenario: Scenario,
+        context: ScenarioContext,
+    ) -> ScenarioReport:
+        """Сценарий с историей его прошлых ревью PR (коммит, открытые таски)."""
+        history = await scenario_history(self._store, pr, scenario, context.repo_dir)
+        env = {**context.env, **history_env(history, context.artifacts, scenario)}
+        report = await run_scenario(scenario, dataclasses.replace(context, env=env))
+        return settle(report, history)
 
     async def _prepare(
         self,

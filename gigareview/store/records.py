@@ -19,6 +19,7 @@ __all__ = [
     "RunRecord",
     "RunStats",
     "ScenarioRecord",
+    "TaskDetails",
 ]
 
 
@@ -136,6 +137,15 @@ TASK_SEPARATOR = "\x1e"
 
 
 @dataclass(frozen=True, slots=True)
+class TaskDetails:
+    """Текст и привязка опубликованной таски: их видит следующий прогон сценария."""
+
+    text: str
+    path: str | None = None
+    line: int | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class CommentRecord:
     """Комментарий, который демон оставил в Bitbucket."""
 
@@ -146,6 +156,7 @@ class CommentRecord:
     kind: CommentKind
     scenario: str
     resolved: bool
+    details: TaskDetails
 
 
 @dataclass(frozen=True, slots=True)

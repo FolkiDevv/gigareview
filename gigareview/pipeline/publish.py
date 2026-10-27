@@ -8,7 +8,7 @@ from gigareview.bitbucket import Anchor, BitbucketApi, PullRequest
 from gigareview.errors import BitbucketError
 from gigareview.scenarios import ScenarioReport, summary_text, task_text
 from gigareview.statuses import EventLevel, Outcome, ReviewStatus, RunStatus
-from gigareview.store import CommentKind, Store
+from gigareview.store import CommentKind, Store, TaskDetails
 
 __all__ = ["Publisher"]
 
@@ -38,7 +38,7 @@ class Publisher:
         # Пользователь нужен для статуса ревью: если его не определить, лучше упасть
         # до публикации, чем оставить таски без статуса и повторить их следующим прогоном.
         await self._api.current_slug()
-        await self._resolve_previous(pr)
+        await self._resolve_previous(pr, reports)
         for report in reports:
             if report.outcome is Outcome.ISSUES:
                 # Таски публикуются по порядку сценариев: так их и читают в PR.
@@ -69,11 +69,21 @@ class Publisher:
                 comment.version,
                 CommentKind.TASK,
                 report.scenario.name,
+                TaskDetails(task.text, task.path, task.line),
             )
 
-    async def _resolve_previous(self, pr: PullRequest) -> None:
-        """Закрывает открытые таски прошлых прогонов; таска, удалённая вручную, — забыта."""
+    async def _resolve_previous(self, pr: PullRequest, reports: Sequence[ScenarioReport]) -> None:
+        """Закрывает открытые таски прошлых прогонов; таска, удалённая вручную, — забыта.
+
+        Таски инкрементальных сценариев остаются открытыми, кроме тех, что сценарий закрыл
+        (``resolved``): он ревьюит только новые изменения и не повторяет прежние замечания.
+        """
+        incremental = [report for report in reports if report.scenario.incremental]
+        kept = {report.scenario.name for report in incremental}
+        resolved = {task_id for report in incremental for task_id in report.resolved}
         for record in self._store.comments.open_tasks(pr.project, pr.repo, pr.id):
+            if record.scenario in kept and record.comment_id not in resolved:
+                continue
             try:
                 # Немного запросов, а ошибку каждого нужно разобрать отдельно.
                 await self._api.resolve_task(  # noqa: WPS476

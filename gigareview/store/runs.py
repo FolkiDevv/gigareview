@@ -3,9 +3,15 @@
 import sqlite3
 from dataclasses import asdict
 
-from gigareview.statuses import RunStatus
+from gigareview.statuses import Outcome, RunStatus
 from gigareview.store.clock import stamp
-from gigareview.store.records import TASK_SEPARATOR, NewRun, RunRecord, ScenarioRecord
+from gigareview.store.records import (
+    TASK_SEPARATOR,
+    CommentKind,
+    NewRun,
+    RunRecord,
+    ScenarioRecord,
+)
 
 __all__ = ["RunRepository"]
 
@@ -111,6 +117,41 @@ class RunRepository:
         statuses = [RunStatus(row["status"]) for row in rows]
         errors = statuses.count(RunStatus.ERROR)
         return errors >= MAX_AUTO_ATTEMPTS or any(status in _SETTLED for status in statuses)
+
+    def last_reviewed_commit(
+        self,
+        project: str,
+        repo: str,
+        pr_id: int,
+        scenario: str,
+        *,
+        other_than: str,
+    ) -> str | None:
+        """Последний коммит PR (не ``other_than``), чьё ревью сценарием попало в Bitbucket.
+
+        Считаются только опубликованные прогоны (есть итоговый комментарий: не сухой режим
+        и не «PR изменился во время прогона»), где сценарий отработал без ошибки.
+        """
+        row = self._db.execute(
+            "SELECT runs.commit_id FROM runs "
+            "JOIN scenario_results ON scenario_results.run_id = runs.id "
+            "WHERE runs.project = ? AND runs.repo = ? AND runs.pr_id = ? "
+            "AND runs.commit_id != ? AND scenario_results.name = ? "
+            "AND scenario_results.outcome IN (?, ?) AND EXISTS ("
+            "SELECT 1 FROM bb_comments WHERE bb_comments.run_id = runs.id "
+            "AND bb_comments.kind = ?) ORDER BY runs.id DESC LIMIT 1",
+            (
+                project,
+                repo,
+                pr_id,
+                other_than,
+                scenario,
+                Outcome.PASSED.value,
+                Outcome.ISSUES.value,
+                CommentKind.SUMMARY.value,
+            ),
+        ).fetchone()
+        return None if row is None else str(row["commit_id"])
 
     def interrupt_active(self) -> int:
         """Прогоны, оставшиеся ``queued``/``running`` от прошлого запуска, — ``interrupted``."""

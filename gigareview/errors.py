@@ -1,6 +1,13 @@
 """Исключения gigareview: всё, что демон умеет показать пользователю понятным текстом."""
 
-__all__ = ["BitbucketError", "ConfigError", "GigaReviewError", "GitError", "SetupError"]
+__all__ = [
+    "BitbucketError",
+    "ConfigError",
+    "GigaReviewError",
+    "GitError",
+    "ScenarioError",
+    "SetupError",
+]
 
 
 class GigaReviewError(Exception):
@@ -17,6 +24,10 @@ class GitError(GigaReviewError):
 
 class SetupError(GigaReviewError):
     """Подготовка прогона не удалась: команда init, неизвестный репозиторий, нет сценариев."""
+
+
+class ScenarioError(GigaReviewError):
+    """Хелпер сценария не справился: нет окружения сценария или ответ модели не разобрать."""
 
 
 class BitbucketError(GigaReviewError):
