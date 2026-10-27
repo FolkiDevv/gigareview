@@ -156,11 +156,27 @@ class Daemon:
         await self._queue.join()
 
     def reload_config(self) -> None:
-        """Перечитывает конфигурацию (параллелизм меняется только перезапуском)."""
+        """Перечитывает конфигурацию: сценарии, репозитории, период опроса.
+
+        Подключение к Bitbucket (адрес, пользователь, токен), адрес дашборда и параллелизм
+        меняются только перезапуском: клиент и воркеры уже созданы.
+        """
         if self._config_path is None:
             raise GigaReviewError("Демон запущен без файла конфигурации")
-        self._reviewer.config = load_config(self._config_path)
+        fresh = load_config(self._config_path)
+        old = self.config
+        self._reviewer.config = fresh
         self._event(EventLevel.NOTE, f"Конфигурация перечитана из {self._config_path}")
+        restart_needed = (
+            fresh.bitbucket != old.bitbucket
+            or fresh.dashboard != old.dashboard
+            or fresh.daemon.max_parallel != old.daemon.max_parallel
+        )
+        if restart_needed:
+            self._event(
+                EventLevel.WARNING,
+                "Bitbucket, дашборд и max_parallel изменятся только после перезапуска демона",
+            )
         self._wake.set()
 
     def status(self) -> DaemonStatus:

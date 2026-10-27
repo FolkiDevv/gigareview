@@ -231,6 +231,10 @@ def test_https_uses_environment_proxies(monkeypatch: pytest.MonkeyPatch) -> None
     assert _client_options(monkeypatch, "https://bb.example.com")["trust_env"]
 
 
+def test_uppercase_https_uses_environment_proxies(monkeypatch: pytest.MonkeyPatch) -> None:
+    assert _client_options(monkeypatch, "HTTPS://bb.example.com")["trust_env"]
+
+
 def test_local_http_ignores_environment_proxies(monkeypatch: pytest.MonkeyPatch) -> None:
     assert not _client_options(monkeypatch, "http://127.0.0.1:7990")["trust_env"]
 

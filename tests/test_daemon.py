@@ -90,6 +90,15 @@ def test_reload_config(tmp_path: Path, store: Store) -> None:
     assert daemon.config.bitbucket.url == "https://bitbucket.example.com"
 
 
+def test_reload_warns_about_restart_only_settings(tmp_path: Path, store: Store) -> None:
+    path = tmp_path / "config.toml"
+    path.write_text(SAMPLE_CONFIG, encoding="utf-8")
+    daemon = _daemon(tmp_path, store, "unused", FakeBitbucket(), config_path=path)
+    daemon.reload_config()
+    warnings = [event.message for event in store.events.list(EventLevel.WARNING)]
+    assert any("перезапуска" in message for message in warnings)
+
+
 def test_reload_without_path_is_error(tmp_path: Path, store: Store) -> None:
     daemon = _daemon(tmp_path, store, "unused", FakeBitbucket())
     with pytest.raises(GigaReviewError, match="без файла"):

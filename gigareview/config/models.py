@@ -170,7 +170,7 @@ class DashboardSettings(_Model):
     def _require_loopback(cls, host: str) -> str:
         # У Web Dashboard нет входа: выводы сценариев и кнопки видны всем, кто достучится.
         if _is_loopback(host):
-            return host
+            return host.strip("[]")
         raise ValueError("Web Dashboard без аутентификации слушает только localhost")
 
 

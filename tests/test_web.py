@@ -112,6 +112,15 @@ def test_other_pages(client: Client, store: Store) -> None:
     assert "PROJ/repo" in config.text
 
 
+def test_config_page_hides_clone_credentials(tmp_path: Path, store: Store) -> None:
+    config = make_config(tmp_path / "home", "https://user:s3cret@bb.example.com/scm/p/r.git")
+    daemon = Daemon(config, store, FakeBitbucket())
+    with TestClient(app=create_app(daemon, store, csrf_secret="test")) as test_client:
+        page = test_client.get("/config").text
+    assert "s3cret" not in page
+    assert "https://***@bb.example.com/scm/p/r.git" in page
+
+
 def test_api_status(client: Client, store: Store) -> None:
     _seed(store)
     status = client.get("/api/status").json()

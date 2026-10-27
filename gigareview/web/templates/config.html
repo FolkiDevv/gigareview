@@ -22,7 +22,7 @@
   <tbody>
   {% for repo, scenarios in repos %}
     <tr>
-      <td>{{ repo.key }}<div class="muted small mono">{{ repo.clone_url }}</div></td>
+      <td>{{ repo.key }}<div class="muted small mono">{{ repo.clone_url | without_credentials }}</div></td>
       <td class="mono">{{ repo.main_branch }}</td>
       <td class="mono">{{ repo.init or "—" }}</td>
       <td>{% for scenario in scenarios %}<span class="tag">{{ scenario.name }}{% if scenario.kind == "ai" %} · AI{% endif %}</span> {% endfor %}</td>

@@ -51,6 +51,22 @@ def test_checkout_picks_up_new_commits(tmp_path: Path, origin: Origin) -> None:
     assert (repo.path / "app.py").read_text() == "print('v2')\n"
 
 
+def test_fork_pr_is_fetched_from_pull_request_ref(tmp_path: Path, origin: Origin) -> None:
+    git("push", "-q", origin.url, f"{origin.feature}:refs/pull-requests/7/from", cwd=origin.work)
+    bare = Path(origin.url)
+    git("symbolic-ref", "HEAD", "refs/heads/master", cwd=bare)
+    git("update-ref", "-d", "refs/heads/feature", cwd=bare)
+    repo = GitRepo(tmp_path / "repo", origin.url)
+
+    async def scenario() -> str:
+        await repo.ensure_clone()
+        return await repo.checkout("fork-branch", "master", origin.feature, fork_pr=7)
+
+    assert asyncio.run(scenario()) == origin.master
+    assert git("rev-parse", "HEAD", cwd=repo.path) == origin.feature
+    assert "refs/pull-requests/7/from" in repo.log
+
+
 def test_unknown_commit_is_git_error(tmp_path: Path, origin: Origin) -> None:
     repo = GitRepo(tmp_path / "repo", origin.url)
     with pytest.raises(GitError, match="git switch"):

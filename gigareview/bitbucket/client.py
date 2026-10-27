@@ -4,6 +4,7 @@ import ssl
 from http import HTTPStatus
 from types import TracebackType
 from typing import Any, Self
+from urllib.parse import urlsplit
 
 import httpx
 import truststore
@@ -41,7 +42,7 @@ class BitbucketClient:
             # Корпоративный CA обычно лежит в системном хранилище, а не в certifi.
             verify=truststore.SSLContext(ssl.PROTOCOL_TLS_CLIENT),
             # По HTTP (только localhost) токен не должен уйти через прокси из окружения.
-            trust_env=base_url.startswith("https://"),
+            trust_env=urlsplit(base_url).scheme.lower() == "https",
         )
 
     async def __aenter__(self) -> Self:

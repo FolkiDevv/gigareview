@@ -76,6 +76,11 @@ class PullRequest(_ApiModel):
         return self.to_ref.repository.slug
 
     @property
+    def is_fork(self) -> bool:
+        """Исходная ветка лежит в другом репозитории (форке)."""
+        return self.from_ref.repository != self.to_ref.repository
+
+    @property
     def commit(self) -> str:
         """Последний коммит исходной ветки."""
         return self.from_ref.latest_commit

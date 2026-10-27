@@ -9,7 +9,7 @@ from gigareview.bitbucket import BitbucketApi, PullRequest
 from gigareview.config import Config, RepoConfig, Scenario
 from gigareview.errors import GigaReviewError, SetupError
 from gigareview.pipeline.publish import Publisher
-from gigareview.pipeline.workspace import Workspace, prepare_workspace, scenario_env
+from gigareview.pipeline.workspace import RepoLock, Workspace, prepare_workspace, scenario_env
 from gigareview.process import subprocess_env
 from gigareview.scenarios import ScenarioContext, ScenarioReport, overall_status, run_scenario
 from gigareview.statuses import EventLevel, RunStatus, Trigger
@@ -84,7 +84,19 @@ class Reviewer:
     ) -> list[ScenarioReport]:
         """Готовит копию PR и выполняет сценарии по порядку, сохраняя каждый результат."""
         env = subprocess_env({}, hidden=(self.config.bitbucket.token_env,))
-        workspace = await self._prepare(run_id, repo, pr, env)
+        with RepoLock(self.config.daemon.home, repo):
+            workspace = await self._prepare(run_id, repo, pr, env)
+            return await self._in_artifacts(run_id, pr, scenarios, workspace, env)
+
+    async def _in_artifacts(
+        self,
+        run_id: int,
+        pr: PullRequest,
+        scenarios: Sequence[Scenario],
+        workspace: Workspace,
+        env: dict[str, str],
+    ) -> list[ScenarioReport]:
+        """Сценарии во временном каталоге артефактов прогона."""
         artifacts_root = self.config.daemon.home / "artifacts"
         artifacts_root.mkdir(parents=True, exist_ok=True)
         prefix = f"run-{run_id}-"
