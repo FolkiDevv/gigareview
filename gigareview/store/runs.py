@@ -3,7 +3,7 @@
 import sqlite3
 from dataclasses import asdict
 
-from gigareview.statuses import Outcome, RunStatus
+from gigareview.statuses import Outcome, RunStatus, Trigger
 from gigareview.store.clock import stamp
 from gigareview.store.records import TASK_SEPARATOR, NewRun, RunRecord, ScenarioRecord
 
@@ -100,16 +100,20 @@ class RunRepository:
         """Коммит уже проверен, проверяется или исчерпал попытки — опрос его не ставит.
 
         Прерванные прогоны не считаются; упавшие с ``error`` повторяются до
-        :data:`MAX_AUTO_ATTEMPTS` раз (сбой сети или git может пройти сам). Вне
+        :data:`MAX_AUTO_ATTEMPTS` раз (сбой сети или git может пройти сам; ручные и
+        CLI-прогоны в этот счёт не входят). Вне
         сухого режима сухие прогоны не считаются: их результат в Bitbucket не попал.
         """
         rows = self._db.execute(
-            "SELECT status FROM runs WHERE project = ? AND repo = ? AND pr_id = ? "
+            "SELECT status, trigger FROM runs WHERE project = ? AND repo = ? AND pr_id = ? "
             "AND commit_id = ? AND (? OR dry_run = 0)",
             (project, repo, pr_id, commit_id, int(dry_run)),
         ).fetchall()
         statuses = [RunStatus(row["status"]) for row in rows]
-        errors = statuses.count(RunStatus.ERROR)
+        errors = sum(
+            RunStatus(row["status"]) is RunStatus.ERROR and row["trigger"] == Trigger.AUTO
+            for row in rows
+        )
         return errors >= MAX_AUTO_ATTEMPTS or any(status in _SETTLED for status in statuses)
 
     def last_reviewed_commit(

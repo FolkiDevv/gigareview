@@ -5,7 +5,7 @@ import pytest
 from fakes import Origin, git
 
 from gigareview.errors import GitError
-from gigareview.gitops import GitRepo
+from gigareview.gitops import GitRepo, redact_credentials
 
 
 def _checkout(repo: GitRepo, commit: str) -> str:
@@ -51,6 +51,22 @@ def test_checkout_picks_up_new_commits(tmp_path: Path, origin: Origin) -> None:
     assert (repo.path / "app.py").read_text() == "print('v2')\n"
 
 
+def test_fork_pr_is_fetched_from_pull_request_ref(tmp_path: Path, origin: Origin) -> None:
+    git("push", "-q", origin.url, f"{origin.feature}:refs/pull-requests/7/from", cwd=origin.work)
+    bare = Path(origin.url)
+    git("symbolic-ref", "HEAD", "refs/heads/master", cwd=bare)
+    git("update-ref", "-d", "refs/heads/feature", cwd=bare)
+    repo = GitRepo(tmp_path / "repo", origin.url)
+
+    async def scenario() -> str:
+        await repo.ensure_clone()
+        return await repo.checkout("fork-branch", "master", origin.feature, fork_pr=7)
+
+    assert asyncio.run(scenario()) == origin.master
+    assert git("rev-parse", "HEAD", cwd=repo.path) == origin.feature
+    assert "refs/pull-requests/7/from" in repo.log
+
+
 def test_unknown_commit_is_git_error(tmp_path: Path, origin: Origin) -> None:
     repo = GitRepo(tmp_path / "repo", origin.url)
     with pytest.raises(GitError, match="git switch"):
@@ -71,6 +87,13 @@ def test_credentials_are_redacted(tmp_path: Path) -> None:
     assert "s3cret" not in str(caught.value)
     assert "s3cret" not in repo.log
     assert "***@localhost" in repo.log
+
+
+def test_token_as_username_is_redacted() -> None:
+    url = "https://TOKEN123@bb.example.com/scm/p/r.git"
+    assert redact_credentials(f"clone {url}", url) == "clone https://***@bb.example.com/scm/p/r.git"
+    ssh = "ssh://git@bb.example.com:7999/p/r.git"
+    assert redact_credentials(ssh, ssh) == ssh
 
 
 def test_timeout_is_git_error(tmp_path: Path, origin: Origin) -> None:

@@ -12,6 +12,7 @@ from fakes import FakeBitbucket, Origin, git, make_config, make_pr
 from gigareview.config import SAMPLE_CONFIG
 from gigareview.errors import BitbucketError
 from gigareview.pipeline import Reviewer, new_run
+from gigareview.pipeline.workspace import RepoLock
 from gigareview.statuses import EventLevel, Outcome, ReviewStatus, RunStatus, Trigger
 from gigareview.store import RunRecord, Store
 
@@ -224,6 +225,27 @@ def test_mark_running_failure_is_recorded(
     assert run.status is RunStatus.ERROR
     assert "database is locked" in run.error
     assert api.comments == []
+
+
+def test_busy_checkout_is_error(tmp_path: Path, store: Store, origin: Origin) -> None:
+    config = make_config(tmp_path / "home", origin.url)
+    repo = config.repos[0]
+    with RepoLock(config.daemon.home, repo):
+        run, api = _review(tmp_path, store, origin)
+    assert run.status is RunStatus.ERROR
+    assert "занята" in run.error
+    assert api.comments == []
+    with RepoLock(config.daemon.home, repo) as first, RepoLock(tmp_path / "other", repo) as second:
+        assert first is not second
+
+
+def test_fork_pr_flag() -> None:
+    pr = make_pr()
+    fork_repository = make_pr(repo="fork").to_ref.repository
+    fork_ref = pr.from_ref.model_copy(update={"repository": fork_repository})
+    fork = pr.model_copy(update={"from_ref": fork_ref})
+    assert not pr.is_fork
+    assert fork.is_fork
 
 
 def test_cancellation_marks_interrupted(tmp_path: Path, store: Store, origin: Origin) -> None:

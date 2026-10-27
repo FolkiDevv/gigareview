@@ -13,7 +13,7 @@ from gigareview.errors import GigaReviewError, SetupError
 from gigareview.pipeline.incremental import history_env, scenario_history, settle
 from gigareview.pipeline.publish import Publisher
 from gigareview.pipeline.status import StatusBoard
-from gigareview.pipeline.workspace import Workspace, prepare_workspace, scenario_env
+from gigareview.pipeline.workspace import RepoLock, Workspace, prepare_workspace, scenario_env
 from gigareview.process import subprocess_env
 from gigareview.scenarios import ScenarioContext, ScenarioReport, overall_status, run_scenario
 from gigareview.statuses import EventLevel, RunStatus, Trigger
@@ -86,14 +86,16 @@ class Reviewer:
         run_url = f"{base_url}/runs/{run.id}"
         board = StatusBoard(self._api, self._store, run, run_url, enabled=not run.dry_run)
         progress = _Progress(run, pr, board)
-        # Сообщение — сразу, до подготовки копии: долгие ИИ-сценарии не должны выглядеть
-        # так, будто PR никто не проверяет.
-        await board.show(pr, (), pending=tuple(chain.from_iterable(phases)))
-        try:
-            note = await self._run_phases(progress, repo, phases)
-        except Exception:
-            await board.fail(pr)
-            raise
+        # Копия занята другим процессом — ошибка до того, как в PR что-то написано.
+        with RepoLock(self.config.daemon.home, repo):
+            # Сообщение — сразу, до подготовки копии: долгие ИИ-сценарии не должны
+            # выглядеть так, будто PR никто не проверяет.
+            await board.show(pr, (), pending=tuple(chain.from_iterable(phases)))
+            try:
+                note = await self._run_phases(progress, repo, phases)
+            except Exception:
+                await board.fail(pr)
+                raise
         return overall_status(progress.reports), note
 
     async def _run_phases(

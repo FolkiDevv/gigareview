@@ -4,9 +4,10 @@ from collections.abc import Callable, Mapping
 from datetime import datetime
 from types import MappingProxyType
 
+from gigareview.gitops import redact_credentials
 from gigareview.statuses import EventLevel, RunStatus
 
-__all__ = ["FILTERS", "duration", "status_label", "when"]
+__all__ = ["FILTERS", "duration", "status_label", "when", "without_credentials"]
 
 # Статусы прогона, исходы сценария и уровни журнала — строки; одинаковые значения
 # (passed, issues, error) подписываются одинаково.
@@ -49,7 +50,13 @@ def status_label(status: str) -> str:
 
 
 #: Фильтры для окружения Jinja.
+def without_credentials(url: str) -> str:
+    """Адрес без пароля (``https://user:pass@host`` → ``https://***@host``)."""
+    return redact_credentials(url, url)
+
+
 FILTERS: Mapping[str, Callable[..., str]] = MappingProxyType({
+    "without_credentials": without_credentials,
     "when": when,
     "duration": duration,
     "status_label": status_label,

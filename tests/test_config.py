@@ -132,6 +132,7 @@ def test_dashboard_base_url() -> None:
     assert _config().dashboard.base_url == "http://127.0.0.1:8765"
     assert _config(dashboard={"public_url": "http://box:1/"}).dashboard.base_url == "http://box:1"
     assert _config(dashboard={"host": "::1"}).dashboard.base_url == "http://[::1]:8765"
+    assert _config(dashboard={"host": "[::1]"}).dashboard.base_url == "http://[::1]:8765"
 
 
 def test_daemon_settings_helpers() -> None:

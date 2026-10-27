@@ -89,6 +89,12 @@ def test_should_skip(store: Store) -> None:
     assert not store.runs.should_skip("PROJ", "repo", 2, "def", dry_run=False)
 
 
+def test_manual_errors_do_not_use_auto_attempts(store: Store) -> None:
+    for trigger in (Trigger.MANUAL, Trigger.CLI, Trigger.MANUAL):
+        store.runs.finish(store.runs.create(replace(_new(), trigger=trigger)), RunStatus.ERROR)
+    assert not store.runs.should_skip("PROJ", "repo", 1, "abc", dry_run=False)
+
+
 def test_dry_runs_do_not_block_real_runs(store: Store) -> None:
     run_id = store.runs.create(replace(_new(), dry_run=True))
     store.runs.finish(run_id, RunStatus.ISSUES)

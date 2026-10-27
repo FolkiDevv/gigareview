@@ -1,9 +1,12 @@
 """Подготовка рабочей копии PR: клон, ветка PR, команда init, окружение сценариев."""
 
+import fcntl
 import sys
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
+from types import TracebackType
+from typing import IO, Self
 
 from gigareview.bitbucket import PullRequest
 from gigareview.config import RepoConfig
@@ -13,6 +16,7 @@ from gigareview.process import run_process
 
 __all__ = [
     "INIT_TIMEOUT",
+    "RepoLock",
     "Workspace",
     "gigareview_command",
     "prepare_workspace",
@@ -36,6 +40,40 @@ class Workspace:
     log: str
 
 
+class RepoLock:
+    """Межпроцессный замок копии репозитория: ``serve`` и ``run`` не делят её одновременно."""
+
+    def __init__(self, home: Path, repo: RepoConfig) -> None:
+        """Замок копии ``repo`` (файл в ``home/locks``)."""
+        stem = repo.key.lower().replace("/", "-")
+        name = f"{stem}.lock"
+        self._path = home / "locks" / name
+        self._lock_file: IO[str] | None = None
+
+    def __enter__(self) -> Self:
+        """Берёт замок; копия занята другим процессом — :class:`SetupError`."""
+        self._path.parent.mkdir(parents=True, exist_ok=True)
+        lock_file = self._path.open("a", encoding="utf-8")
+        try:
+            fcntl.flock(lock_file, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            lock_file.close()
+            raise SetupError("Копия репозитория занята другим процессом gigareview") from None
+        self._lock_file = lock_file
+        return self
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        tb: TracebackType | None,
+    ) -> None:
+        """Отпускает замок."""
+        if self._lock_file is not None:
+            self._lock_file.close()
+            self._lock_file = None
+
+
 def repo_dir(home: Path, repo: RepoConfig) -> Path:
     """Каталог локальной копии репозитория."""
     return home / "repos" / repo.project.lower() / repo.slug.lower()
@@ -53,7 +91,12 @@ async def prepare_workspace(
     """
     git = GitRepo(repo_dir(home, repo), repo.clone_url)
     await git.ensure_clone()
-    merge_base = await git.checkout(pr.from_ref.display_id, pr.to_ref.display_id, pr.commit)
+    merge_base = await git.checkout(
+        pr.from_ref.display_id,
+        pr.to_ref.display_id,
+        pr.commit,
+        fork_pr=pr.id if pr.is_fork else None,
+    )
     log = [git.log]
     if repo.init.strip():
         outcome = await run_process(
