@@ -9,6 +9,7 @@ interval_minutes = 1          # как часто опрашивать Bitbucket
 workdir = "~/.gigareview"     # клоны репозиториев, база SQLite
 max_parallel = 1              # сколько прогонов одновременно (в разных репозиториях)
 dry_run = false               # true — ничего не писать в Bitbucket
+approve = true                # false — не ставить APPROVED (NEEDS_WORK — как обычно)
 
 [bitbucket]
 url = "https://bitbucket.example.com"

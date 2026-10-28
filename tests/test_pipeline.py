@@ -56,6 +56,34 @@ def test_passing_run_approves(tmp_path: Path, store: Store, origin: Origin) -> N
     assert not list((tmp_path / "home" / "artifacts").iterdir())
 
 
+def test_passing_run_without_approve_keeps_status(
+    tmp_path: Path,
+    store: Store,
+    origin: Origin,
+) -> None:
+    run, api = _review(tmp_path, store, origin, daemon_extra={"approve": False})
+    assert run.status is RunStatus.PASSED
+    assert run.published
+    assert len(api.summaries) == 1
+    assert api.statuses == []
+
+
+def test_issues_without_approve_still_request_changes(
+    tmp_path: Path,
+    store: Store,
+    origin: Origin,
+) -> None:
+    run, api = _review(
+        tmp_path,
+        store,
+        origin,
+        scenarios={"lint": {"run": "echo bad", "validate": "exit 1"}},
+        daemon_extra={"approve": False},
+    )
+    assert run.status is RunStatus.ISSUES
+    assert api.statuses == [(1, ReviewStatus.NEEDS_WORK)]
+
+
 def test_issues_post_tasks_and_request_changes(
     tmp_path: Path,
     store: Store,

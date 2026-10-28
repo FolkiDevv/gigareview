@@ -205,7 +205,12 @@ class Reviewer:
         await publisher.publish_tasks(fresh, phase_reports)
         await progress.board.show(fresh, progress.reports, pending)
         if not pending:
-            await publisher.finish(fresh, progress.reports, overall_status(progress.reports))
+            await publisher.finish(
+                fresh,
+                progress.reports,
+                overall_status(progress.reports),
+                approve=self.config.daemon.approve,
+            )
             self._store.runs.mark_published(run.id)
         return ""
 

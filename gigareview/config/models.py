@@ -132,6 +132,8 @@ class DaemonSettings(_Model):
     workdir: Path = Path("~/.gigareview")
     max_parallel: int = Field(default=1, ge=1)
     dry_run: bool = False
+    # false — не ставить APPROVED, когда замечаний нет (NEEDS_WORK ставится как обычно).
+    approve: bool = True
 
     @property
     def home(self) -> Path:
