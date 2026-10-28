@@ -98,6 +98,14 @@ def _is_loopback(host: str | None) -> bool:
         return False
 
 
+def _is_unspecified(host: str) -> bool:
+    """``host`` — «все интерфейсы» (0.0.0.0 или ::)."""
+    try:
+        return ipaddress.ip_address(host).is_unspecified
+    except ValueError:
+        return False
+
+
 def _named(scenarios: dict[str, Scenario]) -> dict[str, Scenario]:
     """Проставляет сценариям имена — ключи таблицы ``[scenarios.<имя>]``."""
     return {
@@ -205,9 +213,12 @@ class DashboardSettings(_Model):
     @model_validator(mode=_AFTER)
     def _require_token_off_loopback(self) -> Self:
         # Без токена выводы сценариев и кнопки видны всем, кто достучится до порта.
-        if self.token.get_secret_value() or _is_loopback(self.host):
-            return self
-        raise ValueError("Web Dashboard не на localhost — задайте dashboard.token")
+        if not self.token.get_secret_value() and not _is_loopback(self.host):
+            raise ValueError("Web Dashboard не на localhost — задайте dashboard.token")
+        # Ссылка http://0.0.0.0:порт в комментарии Bitbucket никуда не ведёт.
+        if _is_unspecified(self.host) and not self.public_url:
+            raise ValueError("Web Dashboard на всех интерфейсах — задайте dashboard.public_url")
+        return self
 
 
 class Config(_Model):

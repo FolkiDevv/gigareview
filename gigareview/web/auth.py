@@ -6,6 +6,8 @@
 
 import hashlib
 import hmac
+import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Annotated, Final
 
@@ -23,6 +25,7 @@ __all__ = ["GuardDep", "LoginForm", "TokenGuard", "login", "login_page"]
 _COOKIE: Final = "gigareview_session"
 _SESSION_DAYS: Final = 30
 _SECONDS_IN_DAY: Final = 86_400
+_SESSION_SECONDS: Final = _SESSION_DAYS * _SECONDS_IN_DAY
 _UNAUTHORIZED: Final = 401
 _SEE_OTHER: Final = 303
 _BEARER: Final = "Bearer "
@@ -33,15 +36,10 @@ _OPEN_PATHS: Final = ("/login", "/static/", "/favicon.ico")
 class TokenGuard:
     """Проверка входа; пустой ``token`` — вход выключен."""
 
-    def __init__(self, token: str) -> None:
-        """Проверка по токену ``token``."""
+    def __init__(self, token: str, *, clock: Callable[[], float] = time.time) -> None:
+        """Проверка по токену ``token``; ``clock`` — текущее время (подменяется в тестах)."""
         self._token = token
-        # В cookie — производное от токена, а не он сам: из cookie токен не восстановить.
-        self._session = hmac.new(
-            token.encode(),
-            b"gigareview-dashboard-session",
-            hashlib.sha256,
-        ).hexdigest()
+        self._clock = clock
 
     @property
     def enabled(self) -> bool:
@@ -52,12 +50,24 @@ class TokenGuard:
         """``candidate`` — верный токен."""
         return self.enabled and hmac.compare_digest(candidate.encode(), self._token.encode())
 
+    def new_session(self) -> str:
+        """Значение cookie сессии: время входа и его подпись токеном (сам токен не виден)."""
+        issued = str(int(self._clock()))
+        return f"{issued}.{self._sign(issued)}"
+
+    def valid_session(self, session: str) -> bool:
+        """Подпись сессии верна, и ей не больше 30 дней (срок проверяет сервер, а не браузер)."""
+        issued, _, signature = session.partition(".")
+        if not issued.isdigit() or not hmac.compare_digest(signature, self._sign(issued)):
+            return False
+        return 0 <= self._clock() - int(issued) <= _SESSION_SECONDS
+
     def session_cookie(self, *, secure: bool) -> Cookie:
         """Cookie сессии после входа."""
         return Cookie(
             key=_COOKIE,
-            value=self._session,
-            max_age=_SESSION_DAYS * _SECONDS_IN_DAY,
+            value=self.new_session(),
+            max_age=_SESSION_SECONDS,
             httponly=True,
             secure=secure,
             samesite="lax",
@@ -70,8 +80,7 @@ class TokenGuard:
         header = request.headers.get("authorization", "")
         if header.startswith(_BEARER) and self.check_token(header.removeprefix(_BEARER)):
             return True
-        cookie = request.cookies.get(_COOKIE, "")
-        return hmac.compare_digest(cookie.encode(), self._session.encode())
+        return self.valid_session(request.cookies.get(_COOKIE, ""))
 
     def before_request(self, request: AnyRequest) -> Response[str] | None:
         """Хук приложения: без входа GET-страница ведёт на ``/login``, остальное — 401."""
@@ -86,6 +95,11 @@ class TokenGuard:
             media_type=MediaType.TEXT,
             headers={"WWW-Authenticate": "Bearer"},
         )
+
+    def _sign(self, issued: str) -> str:
+        """Подпись времени входа токеном."""
+        message = f"gigareview-dashboard-session:{issued}".encode()
+        return hmac.new(self._token.encode(), message, hashlib.sha256).hexdigest()
 
 
 #: Проверка входа — зависимость обработчиков (см. ``create_app``).
@@ -118,7 +132,7 @@ def login(
 ) -> Redirect:
     """Вход: верный токен — cookie сессии и возврат на страницу, неверный — снова форма."""
     target = _local_path(data.target)
-    if not guard.check_token(data.token.strip()):
+    if not guard.check_token(data.token):
         return redirect_with("/login", error="Wrong token", target=target)
     return Redirect(
         path=target,

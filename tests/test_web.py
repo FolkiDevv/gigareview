@@ -13,6 +13,7 @@ from gigareview.pipeline import new_run
 from gigareview.statuses import EventLevel, Outcome, RunStatus, Trigger
 from gigareview.store import CommentKind, ScenarioRecord, Store
 from gigareview.web import create_app
+from gigareview.web.auth import TokenGuard
 
 TEMPLATES = Path(__file__).parent.parent / "gigareview" / "web" / "templates"
 Client = TestClient[Litestar]
@@ -198,6 +199,27 @@ def test_secured_api_accepts_bearer(secured: Client) -> None:
     response = secured.get("/api/status", headers={"Authorization": f"Bearer {TOKEN}"})
     assert response.status_code == 200
     assert secured.get("/api/status", headers={"Authorization": "Bearer nope"}).status_code == 401
+
+
+def test_session_expires_on_server() -> None:
+    now = [1_000_000.0]
+    guard = TokenGuard(TOKEN, clock=lambda: now[0])
+    session = guard.new_session()
+    assert guard.valid_session(session)
+    now[0] += 30 * 86_400
+    assert guard.valid_session(session)
+    now[0] += 1
+    assert not guard.valid_session(session)
+
+
+def test_session_rejects_forged_values() -> None:
+    guard = TokenGuard(TOKEN)
+    issued = guard.new_session().partition(".")[0]
+    forged = TokenGuard("other-token-0123456789").new_session()
+    assert not guard.valid_session(forged)
+    assert not guard.valid_session(f"{issued}.bad")
+    assert not guard.valid_session("")
+    assert not guard.valid_session("x.y")
 
 
 def test_post_requires_csrf(client: Client) -> None:
