@@ -111,13 +111,18 @@ format = 'printf "Новые ошибки mypy:\n\n"; cat'
 То же на [mypy-diff](https://github.com/FolkiDevv/mypy-diff) (`uv tool install mypy-diff`;
 пример есть и в `gigareview init-config`). Он сопоставляет ошибки с учётом сдвига строк, а его
 коды выхода (0 — новых ошибок нет, 1 — есть, 2 — сбой) совпадают с кодами сценария, поэтому
-`validate` не нужен. mypy берётся из `.venv` репозитория, цели — из настроек mypy проекта или
-после `--`.
+`validate` не нужен. mypy задан явно через `--mypy-cmd`: без него mypy-diff сначала смотрит
+`$MYPY_DIFF_MYPY` и активное окружение (`$VIRTUAL_ENV`) демона и только потом `.venv` проекта.
+Цели — из настроек mypy проекта или после `--`.
 
 ```toml
 [scenarios.mypy-diff]
 title = "mypy: новые ошибки"
-run = 'mypy-diff-git -b "$MERGE_BASE" --format plain --only new --no-progress'
+run = """
+mypy-diff-git -b "$MERGE_BASE" --mypy-cmd "$GR_REPO_DIR/.venv/bin/mypy" \
+  --format plain --only new --no-progress
+"""
+timeout_minutes = 5
 ```
 
 ### ИИ-сценарии
