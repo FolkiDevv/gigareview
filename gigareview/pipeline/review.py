@@ -84,7 +84,14 @@ class Reviewer:
             await self._api.current_slug()
         base_url = self.config.dashboard.base_url
         run_url = f"{base_url}/runs/{run.id}"
-        board = StatusBoard(self._api, self._store, run, run_url, enabled=not run.dry_run)
+        board = StatusBoard(
+            self._api,
+            self._store,
+            run,
+            run_url,
+            enabled=not run.dry_run,
+            approve=self.config.daemon.approve,
+        )
         progress = _Progress(run, pr, board)
         # Копия занята другим процессом — ошибка до того, как в PR что-то написано.
         with RepoLock(self.config.daemon.home, repo):

@@ -65,6 +65,8 @@ def test_passing_run_without_approve_keeps_status(
     assert run.status is RunStatus.PASSED
     assert run.published
     assert len(api.summaries) == 1
+    assert "Итог: ✅ замечаний нет\n" in api.summaries[0].text
+    assert "одобрен" not in api.summaries[0].text
     assert api.statuses == []
 
 

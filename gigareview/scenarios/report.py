@@ -34,6 +34,7 @@ _STATUS_LABELS = MappingProxyType({
     RunStatus.ISSUES: "❌ есть замечания — нужны изменения",
     RunStatus.FAILED: "⚠️ замечаний нет, но часть проверок не удалась — статус не изменён",
 })
+_PASSED_UNAPPROVED_LABEL = "✅ замечаний нет"
 
 
 def overall_status(reports: Sequence[ScenarioReport]) -> RunStatus:
@@ -65,14 +66,20 @@ def summary_text(
     commit: str,
     run_url: str,
     pending: Sequence[Scenario] = (),
+    approve: bool = True,
 ) -> str:
-    """Статусный комментарий: таблица сценариев, итог (или «идут проверки») и ссылка."""
+    """Статусный комментарий: таблица сценариев, итог (или «идут проверки») и ссылка.
+
+    Без ``approve`` успешный итог не обещает одобрения PR: статус APPROVED не ставится.
+    """
     rows = [_summary_row(report.scenario, _outcome_label(report)) for report in reports]
     rows.extend(_summary_row(scenario, _PENDING_LABEL) for scenario in pending)
     if pending and reports:
         status_label = _PARTIAL_LABEL
     elif pending:
         status_label = _STARTED_LABEL
+    elif not approve and overall_status(reports) is RunStatus.PASSED:
+        status_label = _PASSED_UNAPPROVED_LABEL
     else:
         status_label = _STATUS_LABELS[overall_status(reports)]
     lines = [
