@@ -36,9 +36,20 @@ _OPEN_PATHS: Final = ("/login", "/static/", "/favicon.ico")
 class TokenGuard:
     """Проверка входа; пустой ``token`` — вход выключен."""
 
-    def __init__(self, token: str, *, clock: Callable[[], float] = time.time) -> None:
-        """Проверка по токену ``token``; ``clock`` — текущее время (подменяется в тестах)."""
+    def __init__(
+        self,
+        token: str,
+        *,
+        https: bool = False,
+        clock: Callable[[], float] = time.time,
+    ) -> None:
+        """Проверка по токену ``token``.
+
+        ``https`` — дашборд открывают по HTTPS (``public_url``): cookie всегда с ``Secure``, даже
+        если прокси не сообщил схему. ``clock`` — текущее время (подменяется в тестах).
+        """
         self._token = token
+        self._https = https
         self._clock = clock
 
     @property
@@ -69,7 +80,7 @@ class TokenGuard:
             value=self.new_session(),
             max_age=_SESSION_SECONDS,
             httponly=True,
-            secure=secure,
+            secure=secure or self._https,
             samesite="lax",
         )
 

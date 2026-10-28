@@ -212,6 +212,12 @@ def test_session_expires_on_server() -> None:
     assert not guard.valid_session(session)
 
 
+def test_session_cookie_secure_behind_https_proxy() -> None:
+    assert TokenGuard(TOKEN, https=True).session_cookie(secure=False).secure
+    assert not TokenGuard(TOKEN).session_cookie(secure=False).secure
+    assert TokenGuard(TOKEN).session_cookie(secure=True).secure
+
+
 def test_session_rejects_forged_values() -> None:
     guard = TokenGuard(TOKEN)
     issued = guard.new_session().partition(".")[0]

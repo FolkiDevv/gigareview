@@ -28,7 +28,11 @@ def create_app(daemon: Daemon, store: Store, *, csrf_secret: str = "") -> Litest
 
     Вход по ``dashboard.token`` задаётся при запуске: перечитывание конфигурации его не меняет.
     """
-    guard = TokenGuard(daemon.config.dashboard.token.get_secret_value())
+    dashboard = daemon.config.dashboard
+    guard = TokenGuard(
+        dashboard.token.get_secret_value(),
+        https=dashboard.public_url.startswith("https://"),
+    )
     return Litestar(
         route_handlers=[
             pages.overview,
