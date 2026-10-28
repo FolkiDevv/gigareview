@@ -8,7 +8,14 @@ from pathlib import Path
 from typing import Final, Self
 from urllib.parse import urlsplit
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    SecretStr,
+    field_validator,
+    model_validator,
+)
 
 __all__ = [
     "BitbucketSettings",
@@ -25,6 +32,7 @@ _AI_TIMEOUT_MINUTES = 20
 _DEFAULT_PORT = 8765
 _SECONDS_IN_MINUTE = 60
 _MAX_PORT = 65535
+_MIN_TOKEN_CHARS = 16
 _FINGERPRINT_CHARS = 16
 _AFTER: Final = "after"
 
@@ -90,6 +98,14 @@ def _is_loopback(host: str | None) -> bool:
         return False
 
 
+def _is_unspecified(host: str) -> bool:
+    """``host`` — «все интерфейсы» (0.0.0.0 или ::)."""
+    try:
+        return ipaddress.ip_address(host).is_unspecified
+    except ValueError:
+        return False
+
+
 def _named(scenarios: dict[str, Scenario]) -> dict[str, Scenario]:
     """Проставляет сценариям имена — ключи таблицы ``[scenarios.<имя>]``."""
     return {
@@ -132,6 +148,8 @@ class DaemonSettings(_Model):
     workdir: Path = Path("~/.gigareview")
     max_parallel: int = Field(default=1, ge=1)
     dry_run: bool = False
+    # false — не ставить APPROVED, когда замечаний нет (NEEDS_WORK ставится как обычно).
+    approve: bool = True
 
     @property
     def home(self) -> Path:
@@ -163,11 +181,15 @@ class BitbucketSettings(_Model):
 
 
 class DashboardSettings(_Model):
-    """Адрес Web Dashboard; ``public_url`` — для ссылок в комментариях Bitbucket."""
+    """Адрес Web Dashboard; ``public_url`` — для ссылок в комментариях Bitbucket.
 
-    host: str = "127.0.0.1"
+    ``token`` включает вход по токену; без него дашборд слушает только localhost.
+    """
+
+    host: str = Field(default="127.0.0.1", min_length=1)
     port: int = Field(default=_DEFAULT_PORT, ge=1, le=_MAX_PORT)
     public_url: str = ""
+    token: SecretStr = SecretStr("")
 
     @property
     def base_url(self) -> str:
@@ -177,11 +199,26 @@ class DashboardSettings(_Model):
 
     @field_validator("host", mode=_AFTER)
     @classmethod
-    def _require_loopback(cls, host: str) -> str:
-        # У Web Dashboard нет входа: выводы сценариев и кнопки видны всем, кто достучится.
-        if _is_loopback(host):
-            return host.strip("[]")
-        raise ValueError("Web Dashboard без аутентификации слушает только localhost")
+    def _strip_brackets(cls, host: str) -> str:
+        return host.strip("[]")
+
+    @field_validator("token", mode=_AFTER)
+    @classmethod
+    def _check_token(cls, token: SecretStr) -> SecretStr:
+        secret = token.get_secret_value()
+        if secret and len(secret) < _MIN_TOKEN_CHARS:
+            raise ValueError(f"токен дашборда короче {_MIN_TOKEN_CHARS} символов")
+        return token
+
+    @model_validator(mode=_AFTER)
+    def _require_token_off_loopback(self) -> Self:
+        # Без токена выводы сценариев и кнопки видны всем, кто достучится до порта.
+        if not self.token.get_secret_value() and not _is_loopback(self.host):
+            raise ValueError("Web Dashboard не на localhost — задайте dashboard.token")
+        # Ссылка http://0.0.0.0:порт в комментарии Bitbucket никуда не ведёт.
+        if _is_unspecified(self.host) and not self.public_url:
+            raise ValueError("Web Dashboard на всех интерфейсах — задайте dashboard.public_url")
+        return self
 
 
 class Config(_Model):

@@ -41,11 +41,18 @@ class Publisher:
         pr: PullRequest,
         reports: Sequence[ScenarioReport],
         status: RunStatus,
+        *,
+        approve: bool = True,
     ) -> None:
-        """Все сценарии завершены: закрыть таски убранных сценариев, поставить статус ревью."""
+        """Все сценарии завершены: закрыть таски убранных сценариев, поставить статус ревью.
+
+        Без ``approve`` статус APPROVED не ставится: пройденный PR остаётся как был.
+        """
         names = {report.scenario.name for report in reports}
         await self._resolve_previous(pr, (), lambda scenario: scenario not in names)
         review_status = _REVIEW_STATUSES.get(status)
+        if review_status is ReviewStatus.APPROVED and not approve:
+            return
         if review_status is not None:
             await self._api.set_review_status(pr, review_status)
 

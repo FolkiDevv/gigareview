@@ -206,6 +206,7 @@ def make_config(
     scenarios: dict[str, Any] | None = None,
     repo_extra: dict[str, Any] | None = None,
     daemon_extra: dict[str, Any] | None = None,
+    dashboard_extra: dict[str, Any] | None = None,
 ) -> Config:
     repo = {
         "project": "PROJ",
@@ -216,6 +217,7 @@ def make_config(
     return Config.model_validate({
         "bitbucket": {"url": "https://bb.example.com", "token_env": "GR_TEST_TOKEN"},
         "daemon": {"workdir": str(home), **(daemon_extra or {})},
+        "dashboard": dashboard_extra or {},
         "scenarios": {"ok": {"run": "true"}} if scenarios is None else scenarios,
         "repos": [repo],
     })

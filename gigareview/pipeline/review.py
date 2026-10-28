@@ -84,8 +84,18 @@ class Reviewer:
             await self._api.current_slug()
         base_url = self.config.dashboard.base_url
         run_url = f"{base_url}/runs/{run.id}"
-        board = StatusBoard(self._api, self._store, run, run_url, enabled=not run.dry_run)
-        progress = _Progress(run, pr, board)
+        # Одно решение на весь прогон: перечитанная посреди прогона конфигурация не должна
+        # развести текст итога и поставленный статус.
+        approve = self.config.daemon.approve
+        board = StatusBoard(
+            self._api,
+            self._store,
+            run,
+            run_url,
+            enabled=not run.dry_run,
+            approve=approve,
+        )
+        progress = _Progress(run, pr, board, approve=approve)
         # Копия занята другим процессом — ошибка до того, как в PR что-то написано.
         with RepoLock(self.config.daemon.home, repo):
             # Сообщение — сразу, до подготовки копии: долгие ИИ-сценарии не должны
@@ -205,7 +215,12 @@ class Reviewer:
         await publisher.publish_tasks(fresh, phase_reports)
         await progress.board.show(fresh, progress.reports, pending)
         if not pending:
-            await publisher.finish(fresh, progress.reports, overall_status(progress.reports))
+            await publisher.finish(
+                fresh,
+                progress.reports,
+                overall_status(progress.reports),
+                approve=progress.approve,
+            )
             self._store.runs.mark_published(run.id)
         return ""
 
@@ -221,11 +236,12 @@ class Reviewer:
 
 @dataclass(slots=True)
 class _Progress:
-    """Ход прогона: запись, PR, статусный комментарий и итоги выполненных сценариев."""
+    """Ход прогона: запись, PR, статусный комментарий, решение об APPROVED и итоги сценариев."""
 
     run: RunRecord
     pr: PullRequest
     board: StatusBoard
+    approve: bool
     reports: list[ScenarioReport] = field(default_factory=list)
 
 

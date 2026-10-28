@@ -122,10 +122,36 @@ def test_dashboard_host_accepts_loopback(host: str) -> None:
     assert _config(dashboard={"host": host}).dashboard.host == host
 
 
-@pytest.mark.parametrize("host", ["10.0.0.5", "box.lan", ""])
+@pytest.mark.parametrize("host", ["10.0.0.5", "box.lan", "192.168.1.10"])
 def test_dashboard_host_rejects_network(host: str) -> None:
-    with pytest.raises(ValueError, match="localhost"):
+    with pytest.raises(ValueError, match=r"dashboard\.token"):
         _config(dashboard={"host": host})
+
+
+def test_dashboard_host_rejects_empty() -> None:
+    with pytest.raises(ValueError, match="host"):
+        _config(dashboard={"host": ""})
+
+
+def test_dashboard_network_host_with_token() -> None:
+    dashboard = _config(dashboard={"host": "192.168.1.10", "token": "t" * 16}).dashboard
+    assert dashboard.host == "192.168.1.10"
+    assert dashboard.token.get_secret_value() == "t" * 16
+    assert "t" * 16 not in repr(dashboard)
+
+
+@pytest.mark.parametrize("host", ["::", "0:0:0:0:0:0:0:0"])
+def test_dashboard_wildcard_host_needs_public_url(host: str) -> None:
+    token = "t" * 16
+    with pytest.raises(ValueError, match="public_url"):
+        _config(dashboard={"host": host, "token": token})
+    dashboard = _config(dashboard={"host": host, "token": token, "public_url": "https://gr"})
+    assert dashboard.dashboard.base_url == "https://gr"
+
+
+def test_dashboard_token_too_short() -> None:
+    with pytest.raises(ValueError, match="16"):
+        _config(dashboard={"host": "192.168.1.10", "token": "short"})
 
 
 def test_dashboard_base_url() -> None:

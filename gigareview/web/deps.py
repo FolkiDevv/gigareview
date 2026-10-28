@@ -36,8 +36,9 @@ def back(request: AnyRequest, fallback: str = "/") -> str:
     return path
 
 
-def redirect_with(path: str, *, notice: str = "", error: str = "") -> Redirect:
-    """Переход на ``path`` с сообщением для пользователя."""
-    query = {key: text for key, text in (("notice", notice), ("error", error)) if text}
+def redirect_with(path: str, *, notice: str = "", error: str = "", target: str = "") -> Redirect:
+    """Переход на ``path`` с сообщением для пользователя; ``target`` — куда вернуться."""
+    pairs = (("notice", notice), ("error", error), ("target", target))
+    query = {key: text for key, text in pairs if text}
     target = f"{path}?{urlencode(query)}" if query else path
     return Redirect(path=target, status_code=_SEE_OTHER)

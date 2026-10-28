@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pytest
 from fakes import FakeBitbucket, make_config, make_pr
+from httpx import Response
 from litestar import Litestar
 from litestar.testing import TestClient
 
@@ -12,9 +13,11 @@ from gigareview.pipeline import new_run
 from gigareview.statuses import EventLevel, Outcome, RunStatus, Trigger
 from gigareview.store import CommentKind, ScenarioRecord, Store
 from gigareview.web import create_app
+from gigareview.web.auth import TokenGuard
 
 TEMPLATES = Path(__file__).parent.parent / "gigareview" / "web" / "templates"
 Client = TestClient[Litestar]
+TOKEN = "dashboard-token-0123456789"
 
 
 @pytest.fixture
@@ -133,6 +136,96 @@ def test_static_htmx_is_served(client: Client) -> None:
     assert response.status_code == 200
     assert "htmx" in response.text
     assert client.get("/static/app.css").status_code == 200
+
+
+def test_favicon(client: Client) -> None:
+    redirect = client.get("/favicon.ico", follow_redirects=False)
+    assert redirect.is_redirect
+    assert redirect.headers["location"] == "/static/favicon.svg"
+    icon = client.get("/static/favicon.svg")
+    assert icon.status_code == 200
+    assert icon.headers["content-type"].startswith("image/svg+xml")
+
+
+@pytest.fixture
+def secured(tmp_path: Path, store: Store, api: FakeBitbucket) -> Iterator[Client]:
+    config = make_config(tmp_path / "home", "unused", dashboard_extra={"token": TOKEN})
+    app = create_app(Daemon(config, store, api), store, csrf_secret="test")
+    with TestClient(app=app) as test_client:
+        yield test_client
+
+
+def _login(client: Client, token: str, target: str = "/runs") -> Response:
+    page = client.get(f"/login?target={target}")
+    assert page.status_code == 200
+    csrf = re.search(r'name="_csrf_token" value="([^"]+)"', page.text)
+    assert csrf is not None
+    return client.post(
+        "/login",
+        data={"_csrf_token": csrf.group(1), "token": token, "target": target},
+        follow_redirects=False,
+    )
+
+
+def test_open_dashboard_needs_no_login(client: Client) -> None:
+    assert client.get("/", follow_redirects=False).status_code == 200
+
+
+def test_secured_dashboard_redirects_to_login(secured: Client) -> None:
+    response = secured.get("/runs", follow_redirects=False)
+    assert response.is_redirect
+    assert response.headers["location"] == "/login?target=%2Fruns"
+    assert secured.get("/api/status").status_code == 401
+    assert secured.get("/static/app.css").status_code == 200
+    assert secured.get("/favicon.ico", follow_redirects=False).is_redirect
+
+
+def test_secured_dashboard_login(secured: Client) -> None:
+    wrong = _login(secured, "wrong-token")
+    assert wrong.headers["location"].startswith("/login?error=Wrong+token")
+    assert "gigareview_session" not in secured.cookies
+    right = _login(secured, TOKEN)
+    assert right.headers["location"] == "/runs"
+    assert TOKEN not in right.headers["set-cookie"]
+    assert "HttpOnly" in right.headers["set-cookie"]
+    assert secured.get("/runs", follow_redirects=False).status_code == 200
+
+
+def test_secured_login_ignores_foreign_target(secured: Client) -> None:
+    assert _login(secured, TOKEN, "//evil.example").headers["location"] == "/"
+
+
+def test_secured_api_accepts_bearer(secured: Client) -> None:
+    response = secured.get("/api/status", headers={"Authorization": f"Bearer {TOKEN}"})
+    assert response.status_code == 200
+    assert secured.get("/api/status", headers={"Authorization": "Bearer nope"}).status_code == 401
+
+
+def test_session_expires_on_server() -> None:
+    now = [1_000_000.0]
+    guard = TokenGuard(TOKEN, clock=lambda: now[0])
+    session = guard.new_session()
+    assert guard.valid_session(session)
+    now[0] += 30 * 86_400
+    assert guard.valid_session(session)
+    now[0] += 1
+    assert not guard.valid_session(session)
+
+
+def test_session_cookie_secure_behind_https_proxy() -> None:
+    assert TokenGuard(TOKEN, https=True).session_cookie(secure=False).secure
+    assert not TokenGuard(TOKEN).session_cookie(secure=False).secure
+    assert TokenGuard(TOKEN).session_cookie(secure=True).secure
+
+
+def test_session_rejects_forged_values() -> None:
+    guard = TokenGuard(TOKEN)
+    issued = guard.new_session().partition(".")[0]
+    forged = TokenGuard("other-token-0123456789").new_session()
+    assert not guard.valid_session(forged)
+    assert not guard.valid_session(f"{issued}.bad")
+    assert not guard.valid_session("")
+    assert not guard.valid_session("x.y")
 
 
 def test_post_requires_csrf(client: Client) -> None:

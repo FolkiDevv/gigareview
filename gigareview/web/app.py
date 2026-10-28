@@ -15,6 +15,7 @@ from litestar.template.config import TemplateConfig
 from gigareview.daemon import Daemon
 from gigareview.store import Store
 from gigareview.web import actions, pages
+from gigareview.web.auth import TokenGuard, login, login_page
 from gigareview.web.formatting import FILTERS
 
 __all__ = ["create_app"]
@@ -23,7 +24,15 @@ _HERE = Path(__file__).parent
 
 
 def create_app(daemon: Daemon, store: Store, *, csrf_secret: str = "") -> Litestar:
-    """Приложение Web Dashboard над демоном ``daemon`` и базой ``store``."""
+    """Приложение Web Dashboard над демоном ``daemon`` и базой ``store``.
+
+    Вход по ``dashboard.token`` задаётся при запуске: перечитывание конфигурации его не меняет.
+    """
+    dashboard = daemon.config.dashboard
+    guard = TokenGuard(
+        dashboard.token.get_secret_value(),
+        https=dashboard.public_url.startswith("https://"),
+    )
     return Litestar(
         route_handlers=[
             pages.overview,
@@ -33,6 +42,9 @@ def create_app(daemon: Daemon, store: Store, *, csrf_secret: str = "") -> Litest
             pages.events_page,
             pages.config_page,
             pages.api_status,
+            pages.favicon,
+            login_page,
+            login,
             actions.poll_now,
             actions.pause,
             actions.resume,
@@ -44,8 +56,10 @@ def create_app(daemon: Daemon, store: Store, *, csrf_secret: str = "") -> Litest
         dependencies={
             "daemon": Provide(_provide_daemon, sync_to_thread=False),
             "store": Provide(_provide_store, sync_to_thread=False),
+            "guard": Provide(_provide_guard, sync_to_thread=False),
         },
-        state=State({"daemon": daemon, "store": store}),
+        state=State({"daemon": daemon, "store": store, "guard": guard}),
+        before_request=guard.before_request,
         template_config=TemplateConfig(
             directory=_HERE / "templates",
             engine=JinjaTemplateEngine,
@@ -70,6 +84,12 @@ def _provide_store(state: State) -> Store:
     """База из состояния приложения."""
     store: Store = state.store
     return store
+
+
+def _provide_guard(state: State) -> TokenGuard:
+    """Проверка входа из состояния приложения."""
+    guard: TokenGuard = state.guard
+    return guard
 
 
 def _register_filters(engine: JinjaTemplateEngine) -> None:

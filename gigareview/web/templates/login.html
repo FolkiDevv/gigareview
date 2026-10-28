@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+{% set section = "login" %}
+{% block title %}Sign in{% endblock %}
+{% block content %}
+<section class="login card">
+  <h1>Sign in</h1>
+  <p class="muted">Enter the dashboard token from the gigareview configuration (<span class="mono">dashboard.token</span>).</p>
+  <form method="post" action="/login">
+    {{ csrf_input | safe }}
+    <input type="hidden" name="target" value="{{ target }}">
+    <input type="password" name="token" placeholder="Token" autocomplete="current-password" required autofocus>
+    <button type="submit" class="btn primary">Sign in</button>
+  </form>
+</section>
+{% endblock %}

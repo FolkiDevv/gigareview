@@ -136,3 +136,8 @@ pre.task { max-height: 260px; }
   main { padding: 16px 12px; }
   .ellipsis { max-width: 200px; }
 }
+
+.login { max-width: 420px; margin: 48px auto; }
+.login form { display: flex; gap: 8px; margin-top: 12px; }
+.login input[type="password"] { flex: 1; font: inherit; padding: 7px 10px; border-radius: 8px;
+  border: 1px solid var(--line); background: var(--panel); color: var(--text); }

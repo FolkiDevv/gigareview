@@ -4,11 +4,12 @@ import os
 import sqlite3
 import tomllib
 from pathlib import Path
-from typing import Any
+from typing import Any, override
 
 import pytest
 from fakes import FakeBitbucket, Origin, git, make_config, make_pr
 
+from gigareview.bitbucket import PullRequest
 from gigareview.config import SAMPLE_CONFIG
 from gigareview.errors import BitbucketError
 from gigareview.pipeline import Reviewer, new_run
@@ -54,6 +55,64 @@ def test_passing_run_approves(tmp_path: Path, store: Store, origin: Origin) -> N
     assert api.statuses == [(1, ReviewStatus.APPROVED)]
     assert [record.outcome for record in store.runs.scenarios(run.id)] == [Outcome.PASSED]
     assert not list((tmp_path / "home" / "artifacts").iterdir())
+
+
+def test_passing_run_without_approve_keeps_status(
+    tmp_path: Path,
+    store: Store,
+    origin: Origin,
+) -> None:
+    run, api = _review(tmp_path, store, origin, daemon_extra={"approve": False})
+    assert run.status is RunStatus.PASSED
+    assert run.published
+    assert len(api.summaries) == 1
+    assert "Итог: ✅ замечаний нет\n" in api.summaries[0].text
+    assert "одобрен" not in api.summaries[0].text
+    assert api.statuses == []
+
+
+class _ReloadingBitbucket(FakeBitbucket):
+    """Перед публикацией подменяет конфигурацию рецензента — как перечитывание посреди прогона."""
+
+    reviewer: Reviewer | None = None
+
+    @override
+    async def get_pull_request(self, project: str, repo: str, pr_id: int) -> PullRequest:
+        if self.reviewer is not None:
+            daemon = self.reviewer.config.daemon.model_copy(update={"approve": False})
+            self.reviewer.config = self.reviewer.config.model_copy(update={"daemon": daemon})
+        return await super().get_pull_request(project, repo, pr_id)
+
+
+def test_reload_mid_run_keeps_approve_decision(
+    tmp_path: Path,
+    store: Store,
+    origin: Origin,
+) -> None:
+    pr = make_pr(commit=origin.feature)
+    api = _ReloadingBitbucket(prs=[pr])
+    reviewer = Reviewer(make_config(tmp_path / "home", origin.url), store, api)
+    api.reviewer = reviewer
+    run_id = store.runs.create(new_run(pr, Trigger.AUTO, fingerprint="fp", dry_run=False))
+    asyncio.run(reviewer.review(run_id, pr))
+    assert api.statuses == [(1, ReviewStatus.APPROVED)]
+    assert "PR одобрен" in api.summaries[0].text
+
+
+def test_issues_without_approve_still_request_changes(
+    tmp_path: Path,
+    store: Store,
+    origin: Origin,
+) -> None:
+    run, api = _review(
+        tmp_path,
+        store,
+        origin,
+        scenarios={"lint": {"run": "echo bad", "validate": "exit 1"}},
+        daemon_extra={"approve": False},
+    )
+    assert run.status is RunStatus.ISSUES
+    assert api.statuses == [(1, ReviewStatus.NEEDS_WORK)]
 
 
 def test_issues_post_tasks_and_request_changes(

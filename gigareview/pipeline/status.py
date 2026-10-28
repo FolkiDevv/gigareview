@@ -28,13 +28,15 @@ class StatusBoard:
         run_url: str,
         *,
         enabled: bool = True,
+        approve: bool = True,
     ) -> None:
-        """Комментарий прогона ``run`` со ссылкой ``run_url`` на Web Dashboard."""
+        """Комментарий прогона ``run`` со ссылкой ``run_url``; ``approve`` — как в итоге."""
         self._api = api
         self._store = store
         self._run = run
         self._run_url = run_url
         self._enabled = enabled
+        self._approve = approve
         self._record_id: int | None = None
         self._comment: Comment | None = None
 
@@ -45,7 +47,13 @@ class StatusBoard:
         pending: Sequence[Scenario] = (),
     ) -> None:
         """Итоги сценариев ``reports``; ``pending`` — ещё не выполненные сценарии."""
-        text = summary_text(reports, commit=pr.commit, run_url=self._run_url, pending=pending)
+        text = summary_text(
+            reports,
+            commit=pr.commit,
+            run_url=self._run_url,
+            pending=pending,
+            approve=self._approve,
+        )
         await self._write(pr, text)
 
     async def fail(self, pr: PullRequest) -> None:

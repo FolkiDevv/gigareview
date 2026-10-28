@@ -9,6 +9,7 @@ interval_minutes = 1          # как часто опрашивать Bitbucket
 workdir = "~/.gigareview"     # клоны репозиториев, база SQLite
 max_parallel = 1              # сколько прогонов одновременно (в разных репозиториях)
 dry_run = false               # true — ничего не писать в Bitbucket
+approve = true                # false — не ставить APPROVED (NEEDS_WORK — как обычно)
 
 [bitbucket]
 url = "https://bitbucket.example.com"
@@ -16,8 +17,9 @@ token_env = "BITBUCKET_TOKEN" # токен читается из этой пер
 user = ""                     # slug пользователя; пусто — определить по токену
 
 [dashboard]
-host = "127.0.0.1"
+host = "127.0.0.1"            # не localhost — только с token (0.0.0.0 — ещё и public_url)
 port = 8765
+# token = ""                  # вход по токену (от 16 символов): openssl rand -hex 24
 
 # Общие сценарии — для всех репозиториев.
 # Окружение команд: TARGET_BRANCH, SOURCE_BRANCH, PR_ID, PR_PROJECT, PR_REPO, PR_COMMIT,
