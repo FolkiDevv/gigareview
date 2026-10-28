@@ -40,6 +40,15 @@ validate = '[ "$GR_RUN_EXIT" -eq 0 ] || exit 2; test -z "$(cat)"'
 format = 'printf "Новые ошибки mypy:\n\n"; cat'
 timeout_minutes = 5
 
+# То же на mypy-diff (https://github.com/FolkiDevv/mypy-diff, `uv tool install mypy-diff`):
+# ошибки сопоставляются с учётом сдвига строк, коды выхода (0/1/2) — те же, что у сценария,
+# поэтому validate не нужен. mypy берётся из .venv репозитория; цели проверки — из настроек
+# mypy проекта или после `--`. Чтобы включить, раскомментируйте и уберите [scenarios.mypy].
+# [scenarios.mypy-diff]
+# title = "mypy: новые ошибки относительно целевой ветки"
+# run = 'mypy-diff-git -b "$MERGE_BASE" --format plain --only new --no-progress'
+# timeout_minutes = 5
+
 # ИИ-ревью на gigacrew: gigacrew — в PATH, его настройки (GIGACREW_*) — из окружения демона
 # или ~/.gigacode/.env. После первого ревью смотрит только новые коммиты PR; свои прошлые
 # таски закрывает сам, когда они исправлены.

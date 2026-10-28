@@ -108,6 +108,18 @@ validate = '[ "$GR_RUN_EXIT" -eq 0 ] || exit 2; test -z "$(cat)"'
 format = 'printf "Новые ошибки mypy:\n\n"; cat'
 ```
 
+То же на [mypy-diff](https://github.com/FolkiDevv/mypy-diff) (`uv tool install mypy-diff`;
+пример есть и в `gigareview init-config`). Он сопоставляет ошибки с учётом сдвига строк, а его
+коды выхода (0 — новых ошибок нет, 1 — есть, 2 — сбой) совпадают с кодами сценария, поэтому
+`validate` не нужен. mypy берётся из `.venv` репозитория, цели — из настроек mypy проекта или
+после `--`.
+
+```toml
+[scenarios.mypy-diff]
+title = "mypy: новые ошибки"
+run = 'mypy-diff-git -b "$MERGE_BASE" --format plain --only new --no-progress'
+```
+
 ### ИИ-сценарии
 
 У сценария `kind = "ai"` итоговый текст (вывод `format`, иначе `run`) — JSON-список тасок
