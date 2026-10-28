@@ -6,7 +6,7 @@ from typing import Any
 from litestar import get
 from litestar.exceptions import NotFoundException
 from litestar.params import FromPath, FromQuery
-from litestar.response import Template
+from litestar.response import Redirect, Template
 
 from gigareview.statuses import EventLevel, Outcome, RunStatus
 from gigareview.store import RunFilter
@@ -17,6 +17,7 @@ __all__ = [
     "api_status",
     "config_page",
     "events_page",
+    "favicon",
     "overview",
     "pull_requests_page",
     "run_page",
@@ -25,6 +26,12 @@ __all__ = [
 
 _RECENT = 10
 _DAY = timedelta(days=1)
+
+
+@get("/favicon.ico", include_in_schema=False, sync_to_thread=False)
+def favicon() -> Redirect:
+    """Иконка для браузеров, которые запрашивают ``/favicon.ico`` без ``<link rel=icon>``."""
+    return Redirect("/static/favicon.svg")
 
 
 @get("/", name="overview", sync_to_thread=False)

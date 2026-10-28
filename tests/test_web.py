@@ -135,6 +135,15 @@ def test_static_htmx_is_served(client: Client) -> None:
     assert client.get("/static/app.css").status_code == 200
 
 
+def test_favicon(client: Client) -> None:
+    redirect = client.get("/favicon.ico", follow_redirects=False)
+    assert redirect.is_redirect
+    assert redirect.headers["location"] == "/static/favicon.svg"
+    icon = client.get("/static/favicon.svg")
+    assert icon.status_code == 200
+    assert icon.headers["content-type"].startswith("image/svg+xml")
+
+
 def test_post_requires_csrf(client: Client) -> None:
     assert client.post("/actions/poll").status_code == 403
 

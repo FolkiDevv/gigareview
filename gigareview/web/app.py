@@ -33,6 +33,7 @@ def create_app(daemon: Daemon, store: Store, *, csrf_secret: str = "") -> Litest
             pages.events_page,
             pages.config_page,
             pages.api_status,
+            pages.favicon,
             actions.poll_now,
             actions.pause,
             actions.resume,
