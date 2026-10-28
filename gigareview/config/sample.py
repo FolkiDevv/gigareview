@@ -17,8 +17,9 @@ token_env = "BITBUCKET_TOKEN" # токен читается из этой пер
 user = ""                     # slug пользователя; пусто — определить по токену
 
 [dashboard]
-host = "127.0.0.1"
+host = "127.0.0.1"            # не localhost (например, 0.0.0.0) — только с token
 port = 8765
+# token = ""                  # вход по токену (от 16 символов): openssl rand -hex 24
 
 # Общие сценарии — для всех репозиториев.
 # Окружение команд: TARGET_BRANCH, SOURCE_BRANCH, PR_ID, PR_PROJECT, PR_REPO, PR_COMMIT,
