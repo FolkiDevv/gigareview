@@ -55,6 +55,18 @@ def make_pr(
     })
 
 
+def with_status(pr: PullRequest, status: str) -> PullRequest:
+    """PR с другим статусом ревьюера ``me``."""
+    reviewers = [{"user": {"name": "me", "slug": "me"}, "status": status}]
+    return PullRequest.model_validate({**pr.model_dump(by_alias=True), "reviewers": reviewers})
+
+
+def with_counts(pr: PullRequest, opened: int, resolved: int) -> PullRequest:
+    """PR со счётчиками тасок в ``properties``."""
+    properties = {"openTaskCount": opened, "resolvedTaskCount": resolved}
+    return PullRequest.model_validate({**pr.model_dump(by_alias=True), "properties": properties})
+
+
 @dataclass
 class PostedComment:
     pr_id: int
@@ -62,6 +74,7 @@ class PostedComment:
     task: bool
     anchor: Anchor | None
     id: int
+    author: str = "me"
 
 
 @dataclass
@@ -78,12 +91,13 @@ class FakeBitbucket:
     list_error: Exception | None = None
     get_error: Exception | None = None
     resolve_error: BitbucketError | None = None
-    comment_error: BitbucketError | None = None
+    tasks_error: BitbucketError | None = None
     update_error: BitbucketError | None = None
     edits: list[int] = field(default_factory=list)
     status_texts: list[str] = field(default_factory=list)
     overrides: dict[int, PullRequest] = field(default_factory=dict)
     closed: bool = False
+    calls: list[str] = field(default_factory=list)
 
     async def __aenter__(self) -> Self:
         return self
@@ -107,6 +121,7 @@ class FakeBitbucket:
         return list(self.prs)
 
     async def get_pull_request(self, project: str, repo: str, pr_id: int) -> PullRequest:
+        self.calls.append("get_pull_request")
         if self.get_error is not None:
             raise self.get_error
         override = self.overrides.get(pr_id)
@@ -131,16 +146,32 @@ class FakeBitbucket:
             self.status_texts.append(text)
         return Comment(id=comment_id, version=0, text=text)
 
-    async def get_comment(self, pr: PullRequest, comment_id: int) -> Comment:
-        if self.comment_error is not None:
-            raise self.comment_error
-        if comment_id in self.deleted:
-            raise BitbucketError("not found", status_code=404)
-        for comment in self.comments:
-            if comment.id == comment_id:
-                state = self.states.get(comment_id, "OPEN")
-                return Comment(id=comment_id, text=comment.text, state=state)
-        raise BitbucketError("not found", status_code=404)
+    async def list_tasks(self, pr: PullRequest) -> list[Comment]:
+        self.calls.append("list_tasks")
+        if self.tasks_error is not None:
+            raise self.tasks_error
+        return [
+            Comment.model_validate({
+                "id": comment.id,
+                "version": 1,
+                "text": comment.text,
+                "severity": "BLOCKER",
+                "author": {"name": comment.author, "slug": comment.author},
+            })
+            for comment in self.comments
+            if comment.task
+            and comment.pr_id == pr.id
+            and comment.id not in self.deleted
+            and self.states.get(comment.id, "OPEN") == "OPEN"
+        ]
+
+    def add_task(self, pr_id: int, text: str, *, author: str = "me") -> int:
+        """Таска, которую оставил человек (не демон)."""
+        comment_id = 100 + len(self.comments)
+        self.comments.append(
+            PostedComment(pr_id, text, task=True, anchor=None, id=comment_id, author=author),
+        )
+        return comment_id
 
     async def resolve_task(self, pr: PullRequest, comment_id: int, version: int) -> Comment:
         if self.resolve_error is not None:
@@ -168,6 +199,9 @@ class FakeBitbucket:
 
     async def set_review_status(self, pr: PullRequest, status: ReviewStatus) -> None:
         self.statuses.append((pr.id, status))
+        self.prs = [
+            with_status(known, status) if known.id == pr.id else known for known in self.prs
+        ]
 
     @property
     def tasks(self) -> list[PostedComment]:

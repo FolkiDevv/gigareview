@@ -2,30 +2,67 @@
 
 from collections.abc import Callable, Sequence
 from http import HTTPStatus
-from types import MappingProxyType
 
 from gigareview.bitbucket import Anchor, BitbucketApi, PullRequest
 from gigareview.errors import BitbucketError
+from gigareview.pipeline.tracking import TaskStates
 from gigareview.scenarios import ScenarioReport, task_text
 from gigareview.statuses import EventLevel, Outcome, ReviewStatus, RunStatus
 from gigareview.store import CommentKind, Store, TaskDetails
 
-__all__ = ["Publisher"]
+__all__ = ["Publisher", "review_decision", "withdraw_approval"]
 
-_REVIEW_STATUSES = MappingProxyType({
-    RunStatus.PASSED: ReviewStatus.APPROVED,
-    RunStatus.ISSUES: ReviewStatus.NEEDS_WORK,
-})
+
+def review_decision(
+    status: RunStatus,
+    current: str | None,
+    *,
+    approve: bool,
+) -> ReviewStatus | None:
+    """Какой статус ревью поставить по итогу ``status`` при текущем ``current``.
+
+    Замечания — NEEDS_WORK; без замечаний — APPROVED, а без ``approve`` снимается только
+    своё NEEDS_WORK; часть проверок не удалась — статус не меняется. ``None`` — менять
+    нечего (в том числе статус уже такой: лишний запрос не нужен).
+    """
+    target: ReviewStatus | None = None
+    if status is RunStatus.ISSUES:
+        target = ReviewStatus.NEEDS_WORK
+    elif status is RunStatus.PASSED and approve:
+        target = ReviewStatus.APPROVED
+    elif status is RunStatus.PASSED and current == ReviewStatus.NEEDS_WORK:
+        target = ReviewStatus.UNAPPROVED
+    return None if target == current else target
+
+
+async def withdraw_approval(api: BitbucketApi, store: Store, pr: PullRequest) -> bool:
+    """Новый коммит PR: одобрение снимается до конца его проверки.
+
+    Одобрение относится к проверенному коммиту. Коммит, итоги которого уже опубликованы
+    (ручной повтор), одобрения не теряет. ``pr`` мог устареть, пока прогон ждал очереди:
+    перед записью статус проверяется по свежему PR (запрос — только если есть что снимать).
+    """
+    if store.watch.is_published(pr.project, pr.repo, pr.id, pr.commit):
+        return False
+    slug = await api.current_slug()
+    if pr.reviewer_status(slug) != ReviewStatus.APPROVED:
+        return False
+    fresh = await api.get_pull_request(pr.project, pr.repo, pr.id)
+    if fresh.state != "OPEN" or fresh.reviewer_status(slug) != ReviewStatus.APPROVED:
+        return False
+    await api.set_review_status(fresh, ReviewStatus.UNAPPROVED)
+    return True
 
 
 class Publisher:
     """Пишет результаты одного прогона в PR и запоминает опубликованное в базе."""
 
-    def __init__(self, api: BitbucketApi, store: Store, run_id: int) -> None:
-        """Публикация прогона ``run_id`` через ``api``."""
+    def __init__(self, api: BitbucketApi, store: Store, run_id: int, states: TaskStates) -> None:
+        """Публикация прогона ``run_id`` через ``api``; ``states`` — свежий снимок тасок PR."""
         self._api = api
         self._store = store
         self._run_id = run_id
+        self._states = states
 
     async def publish_tasks(self, pr: PullRequest, reports: Sequence[ScenarioReport]) -> None:
         """Таски сценариев ``reports``: их прошлые таски закрываются, новые публикуются."""
@@ -46,15 +83,22 @@ class Publisher:
     ) -> None:
         """Все сценарии завершены: закрыть таски убранных сценариев, поставить статус ревью.
 
-        Без ``approve`` статус APPROVED не ставится: пройденный PR остаётся как был.
+        Статус — по :func:`review_decision`: без ``approve`` APPROVED не ставится. Открытая
+        ручная таска пользователя демона — его замечание: пройденный PR получает NEEDS_WORK,
+        а наблюдение снимет его, когда таску закроют.
         """
         names = {report.scenario.name for report in reports}
         await self._resolve_previous(pr, (), lambda scenario: scenario not in names)
-        review_status = _REVIEW_STATUSES.get(status)
-        if review_status is ReviewStatus.APPROVED and not approve:
-            return
+        held = status is RunStatus.PASSED and bool(self._states.manual)
+        if held:
+            status = RunStatus.ISSUES
+        current = pr.reviewer_status(await self._api.current_slug())
+        review_status = review_decision(status, current, approve=approve)
         if review_status is not None:
             await self._api.set_review_status(pr, review_status)
+        if held:
+            # После статуса: не поставленный статус не должен подменить наблюдение прогона.
+            self._store.watch.hold(pr.project, pr.repo, pr.id, self._run_id)
 
     async def _post_tasks(self, pr: PullRequest, report: ScenarioReport) -> None:
         """Таски сценария с замечаниями."""
@@ -86,6 +130,7 @@ class Publisher:
 
         Таски инкрементальных сценариев остаются открытыми, кроме тех, что сценарий закрыл
         (``resolved``): он ревьюит только новые изменения и не повторяет прежние замечания.
+        Версия таски — из снимка: таску, которую трогали в Bitbucket, не нужно перечитывать.
         """
         incremental = [report for report in reports if report.scenario.incremental]
         kept = {report.scenario.name for report in incremental}
@@ -100,7 +145,7 @@ class Publisher:
                 await self._api.resolve_task(  # noqa: WPS476
                     pr,
                     record.comment_id,
-                    record.version,
+                    self._states.versions.get(record.comment_id, record.version),
                 )
             except BitbucketError as error:
                 if error.status_code != HTTPStatus.NOT_FOUND:

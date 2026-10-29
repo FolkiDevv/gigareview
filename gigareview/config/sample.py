@@ -10,6 +10,7 @@ workdir = "~/.gigareview"     # клоны репозиториев, база SQ
 max_parallel = 1              # сколько прогонов одновременно (в разных репозиториях)
 dry_run = false               # true — ничего не писать в Bitbucket
 approve = true                # false — не ставить APPROVED (NEEDS_WORK — как обычно)
+resolve_delay_minutes = 15    # все таски закрыты вручную — снять NEEDS_WORK через N мин без пуша
 
 [bitbucket]
 url = "https://bitbucket.example.com"
@@ -23,9 +24,9 @@ port = 8765
 
 # Общие сценарии — для всех репозиториев.
 # Окружение команд: TARGET_BRANCH, SOURCE_BRANCH, PR_ID, PR_PROJECT, PR_REPO, PR_COMMIT,
-# PR_TITLE, PR_DESCRIPTION, PR_AUTHOR, MERGE_BASE, GR_PREV_COMMIT, GR_OPEN_TASKS, GR_REPO_DIR,
-# GR_ARTIFACTS, GIGAREVIEW; валидации и форматированию — ещё GR_RUN_EXIT и GR_RUN_OUTPUT,
-# а вывод основных команд приходит им на stdin.
+# PR_TITLE, PR_DESCRIPTION, PR_AUTHOR, MERGE_BASE, GR_PREV_COMMIT, GR_OPEN_TASKS,
+# GR_DISMISSED_TASKS, GR_REPO_DIR, GR_ARTIFACTS, GIGAREVIEW; валидации и форматированию — ещё
+# GR_RUN_EXIT и GR_RUN_OUTPUT, а вывод основных команд приходит им на stdin.
 # Код валидации: 0 — замечаний нет, 1 — есть замечания, 2 — сценарий отработал некорректно.
 
 [scenarios.mypy]

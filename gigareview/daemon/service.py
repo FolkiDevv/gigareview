@@ -10,7 +10,7 @@ from pathlib import Path
 from gigareview.bitbucket import BitbucketApi, PullRequest
 from gigareview.config import Config, load_config
 from gigareview.errors import GigaReviewError
-from gigareview.pipeline import Reviewer, new_run
+from gigareview.pipeline import Reviewer, TaskWatch, new_run
 from gigareview.statuses import EventLevel, Trigger
 from gigareview.store import Store
 from gigareview.store.clock import stamp, utc_now
@@ -60,6 +60,7 @@ class Daemon:
         self._api = api
         self._config_path = config_path
         self._reviewer = Reviewer(config, store, api)
+        self._watch = TaskWatch(store, api)
         self._queue: asyncio.Queue[_Job] = asyncio.Queue()
         self._wake = asyncio.Event()
         self._tasks: list[asyncio.Task[None]] = []
@@ -92,7 +93,10 @@ class Daemon:
         self._event(EventLevel.NOTE, "Демон остановлен")
 
     async def poll(self) -> int:
-        """Забирает PR из Bitbucket и ставит в очередь непроверенные коммиты; сколько поставлено."""
+        """Забирает PR из Bitbucket и ставит в очередь непроверенные коммиты; сколько поставлено.
+
+        PR без нового коммита — наблюдению: не закрыли ли вручную все таски демона.
+        """
         try:
             prs = await self._api.list_review_prs()
         except GigaReviewError as error:
@@ -102,6 +106,7 @@ class Daemon:
         self._last_error = ""
         self._store.state.set(_LAST_POLL, stamp())
         queued = 0
+        skipped = []
         for pr in prs:
             if self.config.find_repo(pr.project, pr.repo) is None:
                 continue
@@ -112,9 +117,11 @@ class Daemon:
                 pr.commit,
                 dry_run=self.config.daemon.dry_run,
             ):
+                skipped.append(pr)
                 continue
             self.enqueue(pr, Trigger.AUTO)
             queued += 1
+        await self._watch.check(skipped, self.config)
         return queued
 
     def poll_now(self) -> None:

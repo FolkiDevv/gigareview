@@ -5,7 +5,15 @@ from datetime import timedelta
 from pathlib import Path
 
 from gigareview.statuses import EventLevel, Outcome, RunStatus, Trigger
-from gigareview.store import CommentKind, NewRun, RunFilter, ScenarioRecord, Store, TaskDetails
+from gigareview.store import (
+    CommentKind,
+    NewRun,
+    RunFilter,
+    ScenarioRecord,
+    Store,
+    TaskDetails,
+    TaskWatchRecord,
+)
 from gigareview.store.clock import utc_now
 from gigareview.store.schema import MIGRATIONS
 
@@ -276,7 +284,57 @@ def test_migration_adds_task_details_and_published(tmp_path: Path) -> None:
         summary = store.comments.latest_summary("PROJ", "repo", 1)
         assert summary is not None
         assert summary.comment_id == 4
-        store.comments.set_version(summary.id, 3)
+        store.comments.update(summary.id, 3, "table")
         refreshed = store.comments.latest_summary("PROJ", "repo", 1)
         assert refreshed is not None
         assert refreshed.version == 3
+        assert refreshed.details.text == "table"
+
+
+def test_dismissed_tasks(store: Store) -> None:
+    run_id = store.runs.create(_new())
+    first = store.comments.add(run_id, 5, 0, CommentKind.TASK, "ai", TaskDetails("a"))
+    second = store.comments.add(run_id, 6, 0, CommentKind.TASK, "ai", TaskDetails("b"))
+    store.comments.mark_dismissed(first)
+    store.comments.mark_resolved(second)
+    assert [
+        record.comment_id for record in store.comments.dismissed_tasks("PROJ", "repo", 1, "ai")
+    ] == [5]
+    assert store.comments.open_tasks("PROJ", "repo", 1) == []
+    store.comments.mark_open(first)
+    assert store.comments.dismissed_tasks("PROJ", "repo", 1, "ai") == []
+    assert [record.comment_id for record in store.comments.open_tasks("PROJ", "repo", 1)] == [5]
+
+
+def test_watch_runs_queries(store: Store) -> None:
+    assert store.watch.last_published("PROJ", "repo", 1) is None
+    first = store.runs.create(_new(commit="one"))
+    store.runs.finish(first, RunStatus.ISSUES)
+    store.runs.mark_published(first)
+    second = store.runs.create(_new(commit="two"))
+    assert store.watch.has_active("PROJ", "repo", 1)
+    store.runs.finish(second, RunStatus.ERROR)
+    assert not store.watch.has_active("PROJ", "repo", 1)
+    published = store.watch.last_published("PROJ", "repo", 1)
+    assert published is not None
+    assert published.id == first
+    assert store.watch.is_published("PROJ", "repo", 1, "one")
+    assert not store.watch.is_published("PROJ", "repo", 1, "two")
+
+
+def test_watch_record_roundtrip(store: Store) -> None:
+    run_id = store.runs.create(_new())
+    other = store.runs.create(_new(commit="other"))
+    fresh = store.watch.get("PROJ", "repo", 1, run_id)
+    assert fresh == TaskWatchRecord("PROJ", "repo", 1, run_id)
+    moment = utc_now()
+    saved = replace(
+        fresh,
+        task_counts="1/2",
+        checked_at=moment,
+        clear_since=moment,
+        settled_status="APPROVED",
+    )
+    store.watch.save(saved)
+    assert store.watch.get("PROJ", "repo", 1, run_id) == saved
+    assert store.watch.get("PROJ", "repo", 1, other) == TaskWatchRecord("PROJ", "repo", 1, other)

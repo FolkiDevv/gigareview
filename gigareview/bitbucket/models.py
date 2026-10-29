@@ -64,6 +64,7 @@ class PullRequest(_ApiModel):
     author: Participant
     reviewers: tuple[Participant, ...] = ()
     links: dict[str, Any] = Field(default_factory=dict)
+    properties: dict[str, Any] = Field(default_factory=dict)
 
     @property
     def project(self) -> str:
@@ -96,6 +97,15 @@ class PullRequest(_ApiModel):
         """Отображаемое имя автора."""
         return self.author.user.display_name or self.author.user.name
 
+    @property
+    def task_counts(self) -> tuple[int, int] | None:
+        """Открытые и закрытые таски PR из ``properties`` (``None`` — Bitbucket их не отдал)."""
+        opened = self.properties.get("openTaskCount")
+        resolved = self.properties.get("resolvedTaskCount")
+        if isinstance(opened, int) and isinstance(resolved, int):
+            return opened, resolved
+        return None
+
     def reviewer_status(self, slug: str) -> str | None:
         """Статус ревьюера ``slug`` или ``None``, если он не в ревьюерах."""
         return next(
@@ -116,6 +126,12 @@ class Comment(_ApiModel):
     text: str = ""
     state: str = "OPEN"
     severity: str = "NORMAL"
+    author: User = Field(default_factory=User)
+
+    @property
+    def is_open(self) -> bool:
+        """Таска не закрыта."""
+        return self.state != "RESOLVED"
 
 
 @dataclass(frozen=True, slots=True)

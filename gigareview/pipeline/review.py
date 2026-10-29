@@ -8,11 +8,12 @@ from itertools import chain
 from pathlib import Path
 
 from gigareview.bitbucket import BitbucketApi, PullRequest
-from gigareview.config import Config, RepoConfig, Scenario, ScenarioKind
+from gigareview.config import Config, DaemonSettings, RepoConfig, Scenario, ScenarioKind
 from gigareview.errors import GigaReviewError, SetupError
 from gigareview.pipeline.incremental import history_env, scenario_history, settle
-from gigareview.pipeline.publish import Publisher
+from gigareview.pipeline.publish import Publisher, withdraw_approval
 from gigareview.pipeline.status import StatusBoard
+from gigareview.pipeline.tracking import TaskStates, fetch_task_states
 from gigareview.pipeline.workspace import RepoLock, Workspace, prepare_workspace, scenario_env
 from gigareview.process import subprocess_env
 from gigareview.scenarios import ScenarioContext, ScenarioReport, overall_status, run_scenario
@@ -85,19 +86,21 @@ class Reviewer:
         base_url = self.config.dashboard.base_url
         run_url = f"{base_url}/runs/{run.id}"
         # Одно решение на весь прогон: перечитанная посреди прогона конфигурация не должна
-        # развести текст итога и поставленный статус.
-        approve = self.config.daemon.approve
+        # развести текст итога (и памятки) и поставленный статус.
+        policy = self.config.daemon
         board = StatusBoard(
             self._api,
             self._store,
             run,
             run_url,
             enabled=not run.dry_run,
-            approve=approve,
+            policy=policy,
         )
-        progress = _Progress(run, pr, board, approve=approve)
+        progress = _Progress(run, pr, board, policy=policy)
         # Копия занята другим процессом — ошибка до того, как в PR что-то написано.
         with RepoLock(self.config.daemon.home, repo):
+            if not run.dry_run:
+                await self._withdraw(pr, run.id)
             # Сообщение — сразу, до подготовки копии: долгие ИИ-сценарии не должны
             # выглядеть так, будто PR никто не проверяет.
             await board.show(pr, (), pending=tuple(chain.from_iterable(phases)))
@@ -153,6 +156,10 @@ class Reviewer:
         context: ScenarioContext,
     ) -> str:
         """Этап: сценарии по порядку (каждый результат сохраняется сразу), затем публикация."""
+        if progress.states is None and any(scenario.incremental for scenario in scenarios):
+            # Инкрементальному сценарию нужно точное состояние его тасок, а снимка с прошлой
+            # публикации нет (первый этап или сухой режим).
+            progress.states = await fetch_task_states(self._api, self._store, progress.pr)
         phase_reports = []
         for scenario in scenarios:
             report = await self._run_one(progress.pr, scenario, context)  # noqa: WPS476
@@ -168,9 +175,8 @@ class Reviewer:
         scenario: Scenario,
         context: ScenarioContext,
     ) -> ScenarioReport:
-        """Сценарий с историей его прошлых ревью PR (коммит, открытые таски)."""
+        """Сценарий с историей его прошлых ревью PR (коммит, открытые и закрытые людьми таски)."""
         history = await scenario_history(
-            self._api,
             self._store,
             pr,
             scenario,
@@ -217,18 +223,38 @@ class Reviewer:
                 note = f"{note}, оставшиеся сценарии не запускались"
             self._event(EventLevel.WARNING, f"{_pr_label(pr)}: {note}", run.id)
             return note
-        publisher = Publisher(self._api, self._store, run.id)
+        states = await self._snapshot(progress, fresh)
+        # Открытая ручная таска пользователя демона — его замечание: PR не одобряется.
+        approve = progress.policy.approve and not states.manual
+        publisher = Publisher(self._api, self._store, run.id, states)
         await publisher.publish_tasks(fresh, phase_reports)
-        await progress.board.show(fresh, progress.reports, pending)
+        await progress.board.show(fresh, progress.reports, pending, approve=approve)
         if not pending:
             await publisher.finish(
                 fresh,
                 progress.reports,
                 overall_status(progress.reports),
-                approve=progress.approve,
+                approve=progress.policy.approve,
             )
             self._store.runs.mark_published(run.id)
         return ""
+
+    async def _snapshot(self, progress: "_Progress", fresh: PullRequest) -> TaskStates:
+        """Снимок тасок перед публикацией этапа (новые таски этапа в него не входят)."""
+        progress.states = await fetch_task_states(
+            self._api,
+            self._store,
+            fresh,
+            counts=fresh.task_counts,
+            slug=await self._api.current_slug(),
+        )
+        return progress.states
+
+    async def _withdraw(self, pr: PullRequest, run_id: int) -> None:
+        """Новый коммит снимает одобрение PR до конца его проверки."""
+        if await withdraw_approval(self._api, self._store, pr):
+            message = f"{_pr_label(pr)}: новый коммит — одобрение снято до конца проверки"
+            self._event(EventLevel.NOTE, message, run_id)
 
     def _crashed(self, run_id: int, error: str) -> RunStatus:
         """Прогон упал: статус ``error`` и запись в журнале."""
@@ -242,13 +268,18 @@ class Reviewer:
 
 @dataclass(slots=True)
 class _Progress:
-    """Ход прогона: запись, PR, статусный комментарий, решение об APPROVED и итоги сценариев."""
+    """Ход прогона: запись, PR, статусный комментарий, настройки, итоги и снимок тасок.
+
+    ``policy`` — настройки демона на момент начала прогона (решение об APPROVED, памятка);
+    ``states`` — последний снимок тасок PR (обновляется при каждой публикации).
+    """
 
     run: RunRecord
     pr: PullRequest
     board: StatusBoard
-    approve: bool
+    policy: DaemonSettings
     reports: list[ScenarioReport] = field(default_factory=list)
+    states: TaskStates | None = None
 
 
 def _phases(scenarios: Sequence[Scenario]) -> list[tuple[Scenario, ...]]:
