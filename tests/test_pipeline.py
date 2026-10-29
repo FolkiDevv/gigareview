@@ -715,3 +715,16 @@ def test_dismissed_tasks_go_to_their_own_file(
     assert run.status is RunStatus.PASSED
     dismissed = store.comments.dismissed_tasks("PROJ", "repo", 1, "ai")
     assert [record.comment_id for record in dismissed] == [two]
+
+
+def test_status_changed_while_queued_is_not_withdrawn(
+    tmp_path: Path,
+    store: Store,
+    origin: Origin,
+) -> None:
+    listed = with_status(make_pr(commit=origin.feature), "APPROVED")
+    api = FakeBitbucket(prs=[with_status(listed, "NEEDS_WORK")])
+    config = make_config(tmp_path / "home", origin.url)
+    run_id = store.runs.create(new_run(listed, Trigger.AUTO, fingerprint="fp", dry_run=False))
+    asyncio.run(Reviewer(config, store, api).review(run_id, listed))
+    assert ReviewStatus.UNAPPROVED not in [status for _, status in api.statuses]

@@ -39,13 +39,18 @@ async def withdraw_approval(api: BitbucketApi, store: Store, pr: PullRequest) ->
     """Новый коммит PR: одобрение снимается до конца его проверки.
 
     Одобрение относится к проверенному коммиту. Коммит, итоги которого уже опубликованы
-    (ручной повтор), одобрения не теряет.
+    (ручной повтор), одобрения не теряет. ``pr`` мог устареть, пока прогон ждал очереди:
+    перед записью статус проверяется по свежему PR (запрос — только если есть что снимать).
     """
-    if pr.reviewer_status(await api.current_slug()) != ReviewStatus.APPROVED:
-        return False
     if store.watch.is_published(pr.project, pr.repo, pr.id, pr.commit):
         return False
-    await api.set_review_status(pr, ReviewStatus.UNAPPROVED)
+    slug = await api.current_slug()
+    if pr.reviewer_status(slug) != ReviewStatus.APPROVED:
+        return False
+    fresh = await api.get_pull_request(pr.project, pr.repo, pr.id)
+    if fresh.state != "OPEN" or fresh.reviewer_status(slug) != ReviewStatus.APPROVED:
+        return False
+    await api.set_review_status(fresh, ReviewStatus.UNAPPROVED)
     return True
 
 
