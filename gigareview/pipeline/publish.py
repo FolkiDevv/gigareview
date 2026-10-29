@@ -89,13 +89,16 @@ class Publisher:
         """
         names = {report.scenario.name for report in reports}
         await self._resolve_previous(pr, (), lambda scenario: scenario not in names)
-        if status is RunStatus.PASSED and self._states.manual:
+        held = status is RunStatus.PASSED and bool(self._states.manual)
+        if held:
             status = RunStatus.ISSUES
-            self._store.watch.hold(pr.project, pr.repo, pr.id, self._run_id)
         current = pr.reviewer_status(await self._api.current_slug())
         review_status = review_decision(status, current, approve=approve)
         if review_status is not None:
             await self._api.set_review_status(pr, review_status)
+        if held:
+            # После статуса: не поставленный статус не должен подменить наблюдение прогона.
+            self._store.watch.hold(pr.project, pr.repo, pr.id, self._run_id)
 
     async def _post_tasks(self, pr: PullRequest, report: ScenarioReport) -> None:
         """Таски сценария с замечаниями."""
