@@ -64,16 +64,17 @@ def parse_tasks(text: str) -> tuple[Task, ...]:
 def parse_review(text: str) -> ReviewDocument:
     """Разбирает ``[{"text", "path", "line"}]`` или ``{"tasks", "resolved", "partial"}``.
 
-    Модели любят оборачивать JSON в пояснения и ```-блоки: берётся фрагмент от первой
-    ``[`` или ``{`` до последней парной скобки. Не JSON (перед итогом — строки лога со
-    скобками, ``[INFO] …``) — последний объект-итог вывода (с ``tasks``, ``resolved`` или
-    ``partial``). Неразборчивый вывод — :class:`ValueError`.
+    Итог — последний объект вывода с ``tasks``, ``resolved`` или ``partial``: строки лога
+    со скобками (``[INFO] …``, ``[]``) до и после него не мешают. Нет такого объекта —
+    голый список тасок: фрагмент от первой ``[`` или ``{`` до последней парной скобки
+    (модели любят оборачивать JSON в пояснения и ```-блоки). Неразборчивый вывод —
+    :class:`ValueError`.
     """
-    try:
-        parsed = json.loads(_json_fragment(text))
-    except json.JSONDecodeError as error:
-        parsed = _last_document(text)
-        if parsed is None:
+    parsed: object = _last_document(text)
+    if parsed is None:
+        try:
+            parsed = json.loads(_json_fragment(text))
+        except json.JSONDecodeError as error:
             raise ValueError(f"вывод — не JSON: {error}") from error
     resolved: object = []
     partial_raw: object = False

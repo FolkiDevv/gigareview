@@ -295,6 +295,7 @@ def test_parse_review_skips_bracketed_log_lines() -> None:
     [
         '[INFO] {"tasks": [], "partial": true}\n[42]',
         '[INFO] {"tasks": [], "partial": true}\n{"level": "info"}',
+        '[] start\n{"partial": true}',
     ],
 )
 def test_log_fragments_after_document_do_not_replace_it(text: str) -> None:
