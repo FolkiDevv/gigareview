@@ -290,6 +290,22 @@ def test_parse_review_skips_bracketed_log_lines() -> None:
         parse_review("[INFO] start [x]")
 
 
+@pytest.mark.parametrize(
+    "text",
+    [
+        '[INFO] {"tasks": [], "partial": true}\n[42]',
+        '[INFO] {"tasks": [], "partial": true}\n{"level": "info"}',
+    ],
+)
+def test_log_fragments_after_document_do_not_replace_it(text: str) -> None:
+    assert parse_review(text).partial
+
+
+def test_truncated_document_is_not_replaced_by_nested_value() -> None:
+    with pytest.raises(ValueError, match="JSON"):
+        parse_review('[INFO] {"tasks": [{"text": "a"}], "partial": ')
+
+
 def test_partial_after_log_lines_is_error(tmp_path: Path) -> None:
     document = '{"tasks": [], "partial": true}'
     report = _run(tmp_path, kind="ai", run=f"echo '[INFO] start'; echo '{document}'")

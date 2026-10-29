@@ -51,8 +51,8 @@ class _TaskModel(BaseModel):
 
 _TASKS = TypeAdapter(list[_TaskModel])
 _RESOLVED = TypeAdapter(list[int])
-#: Сколько последних символов вывода просматривается в поисках итога.
-_TAIL_CHARS = 200_000
+#: Поля, по которым объект в выводе считается итогом ИИ-сценария.
+_DOCUMENT_KEYS = frozenset(("tasks", "resolved", "partial"))
 _PARTIAL = TypeAdapter(StrictBool)
 
 
@@ -66,13 +66,13 @@ def parse_review(text: str) -> ReviewDocument:
 
     Модели любят оборачивать JSON в пояснения и ```-блоки: берётся фрагмент от первой
     ``[`` или ``{`` до последней парной скобки. Не JSON (перед итогом — строки лога со
-    скобками, ``[INFO] …``) — последнее JSON-значение вывода. Неразборчивый вывод —
-    :class:`ValueError`.
+    скобками, ``[INFO] …``) — последний объект-итог вывода (с ``tasks``, ``resolved`` или
+    ``partial``). Неразборчивый вывод — :class:`ValueError`.
     """
     try:
         parsed = json.loads(_json_fragment(text))
     except json.JSONDecodeError as error:
-        parsed = _last_json(text)
+        parsed = _last_document(text)
         if parsed is None:
             raise ValueError(f"вывод — не JSON: {error}") from error
     resolved: object = []
@@ -92,23 +92,27 @@ def parse_review(text: str) -> ReviewDocument:
     return ReviewDocument(tasks, tuple(dict.fromkeys(resolved_ids)), partial=partial)
 
 
-def _last_json(text: str) -> object | None:
-    """Последнее JSON-значение (объект или список) в тексте; вложенные не считаются."""
+def _last_document(text: str) -> dict[str, object] | None:
+    """Последний объект-итог в тексте (с ``tasks``, ``resolved`` или ``partial``).
+
+    Списки и прочие значения не берутся: строка лога ``[42]`` или вложенный список из
+    обрезанного итога не должны подменить сам итог. Вложенные в найденный объект значения
+    не просматриваются.
+    """
     decoder = json.JSONDecoder()
-    found: object | None = None
+    found: dict[str, object] | None = None
     index = 0
-    tail = text[-_TAIL_CHARS:]
     while True:
-        starts = [
-            position for position in (tail.find("[", index), tail.find("{", index)) if position >= 0
-        ]
-        if not starts:
+        start = text.find("{", index)
+        if start < 0:
             return found
-        start = min(starts)
         try:
-            found, index = decoder.raw_decode(tail, start)
+            parsed, index = decoder.raw_decode(text, start)
         except json.JSONDecodeError:
             index = start + 1
+            continue
+        if isinstance(parsed, dict) and _DOCUMENT_KEYS & parsed.keys():
+            found = parsed
 
 
 def _json_fragment(text: str) -> str:
