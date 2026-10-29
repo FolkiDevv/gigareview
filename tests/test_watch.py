@@ -350,3 +350,45 @@ def test_deleted_summary_is_not_posted_again(
     assert api.statuses[-1] == (1, ReviewStatus.APPROVED)
     assert len(api.summaries) == 0
     assert summaries == 1
+
+
+def test_run_held_by_manual_task_is_approved_after_it_closes(
+    tmp_path: Path,
+    store: Store,
+    origin: Origin,
+    clock: Clock,
+) -> None:
+    config = make_config(
+        tmp_path / "home",
+        origin.url,
+        daemon_extra={"resolve_delay_minutes": 0},
+    )
+    pr = make_pr(commit=origin.feature)
+    api = FakeBitbucket(prs=[pr])
+    manual = api.add_task(1, "своё замечание")
+    run_id = store.runs.create(new_run(pr, Trigger.AUTO, fingerprint="fp", dry_run=False))
+    assert asyncio.run(Reviewer(config, store, api).review(run_id, pr)) is RunStatus.PASSED
+    assert api.statuses == [(1, ReviewStatus.NEEDS_WORK)]
+    _check(store, api, config)
+    assert len(api.statuses) == 1
+    api.states[manual] = "RESOLVED"
+    api.prs = [with_counts(api.prs[0], 0, 1)]
+    _check(store, api, config)
+    assert api.statuses[-1] == (1, ReviewStatus.APPROVED)
+
+
+def test_passed_run_with_manual_needs_work_is_left_alone(
+    tmp_path: Path,
+    store: Store,
+    origin: Origin,
+    clock: Clock,
+) -> None:
+    config = make_config(tmp_path / "home", origin.url, daemon_extra={"resolve_delay_minutes": 0})
+    pr = make_pr(commit=origin.feature)
+    api = FakeBitbucket(prs=[pr])
+    run_id = store.runs.create(new_run(pr, Trigger.AUTO, fingerprint="fp", dry_run=False))
+    asyncio.run(Reviewer(config, store, api).review(run_id, pr))
+    api.prs = [with_status(api.prs[0], "NEEDS_WORK")]
+    api.calls.clear()
+    _check(store, api, config)
+    assert api.calls == []

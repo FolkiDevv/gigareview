@@ -83,10 +83,15 @@ class Publisher:
     ) -> None:
         """Все сценарии завершены: закрыть таски убранных сценариев, поставить статус ревью.
 
-        Статус — по :func:`review_decision`: без ``approve`` APPROVED не ставится.
+        Статус — по :func:`review_decision`: без ``approve`` APPROVED не ставится. Открытая
+        ручная таска пользователя демона — его замечание: пройденный PR получает NEEDS_WORK,
+        а наблюдение снимет его, когда таску закроют.
         """
         names = {report.scenario.name for report in reports}
         await self._resolve_previous(pr, (), lambda scenario: scenario not in names)
+        if status is RunStatus.PASSED and self._states.manual:
+            status = RunStatus.ISSUES
+            self._store.watch.hold(pr.project, pr.repo, pr.id, self._run_id)
         current = pr.reviewer_status(await self._api.current_slug())
         review_status = review_decision(status, current, approve=approve)
         if review_status is not None:

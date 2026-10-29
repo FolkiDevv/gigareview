@@ -70,6 +70,15 @@ class WatchRepository:
             settled_status=row["settled_status"],
         )
 
+    def hold(self, project: str, repo: str, pr_id: int, run_id: int) -> None:
+        """Прогон без замечаний придержан ручной таской: наблюдение следит и за ним."""
+        self.save(TaskWatchRecord(project, repo, pr_id, run_id))
+
+    def is_held(self, run_id: int) -> bool:
+        """Наблюдение заведено для прогона ``run_id`` (с замечаниями или придержанного)."""
+        row = self._db.execute("SELECT 1 FROM task_watch WHERE run_id = ?", (run_id,)).fetchone()
+        return row is not None
+
     def save(self, watch: TaskWatchRecord) -> None:
         """Сохраняет ход наблюдения (одна запись на PR)."""
         self._db.execute(

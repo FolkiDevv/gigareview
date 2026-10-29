@@ -234,7 +234,7 @@ class Reviewer:
                 fresh,
                 progress.reports,
                 overall_status(progress.reports),
-                approve=approve,
+                approve=progress.policy.approve,
             )
             self._store.runs.mark_published(run.id)
         return ""

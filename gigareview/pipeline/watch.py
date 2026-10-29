@@ -64,9 +64,12 @@ class TaskWatch:
     async def _check(self, pr: PullRequest, config: Config) -> None:
         """Один PR: дешёвые проверки по базе, затем — по ответу опроса."""
         run = self._store.watch.last_published(pr.project, pr.repo, pr.id)
-        # Только прогон с замечаниями на текущем коммите: новый коммит (и force-push на
-        # старый) проверит прогон, у прогона в очереди статус поставит он сам.
-        if run is None or run.commit_id != pr.commit or run.status is not RunStatus.ISSUES:
+        # Только прогон с замечаниями (или придержанный ручной таской) на текущем коммите:
+        # новый коммит (и force-push на старый) проверит прогон, у прогона в очереди статус
+        # поставит он сам.
+        if run is None or run.commit_id != pr.commit:
+            return
+        if run.status is not RunStatus.ISSUES and not self._store.watch.is_held(run.id):
             return
         if self._store.watch.has_active(pr.project, pr.repo, pr.id):
             return

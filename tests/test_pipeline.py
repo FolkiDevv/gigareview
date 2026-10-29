@@ -630,8 +630,9 @@ def test_manual_task_of_user_blocks_approval(
     api.add_task(1, "своё замечание")
     run = _review_pr(tmp_path, store, origin, api)
     assert run.status is RunStatus.PASSED
-    assert api.statuses == []
+    assert api.statuses == [(1, ReviewStatus.NEEDS_WORK)]
     assert "PR одобрен" not in api.summaries[-1].text
+    assert store.watch.is_held(run.id)
 
 
 def test_one_task_listing_per_phase_for_many_old_tasks(
