@@ -332,3 +332,6 @@ def test_cli_format_anchors_tasks(
     assert _main(monkeypatch, ["tasks"], answer) == 0
     stopped = json.loads(capsys.readouterr().out)
     assert stopped["tasks"][0]["text"].endswith("проверены не все изменения._")
+    assert stopped["partial"] is True
+    assert parse_review(json.dumps(stopped)).partial
+    assert rendered["partial"] is False

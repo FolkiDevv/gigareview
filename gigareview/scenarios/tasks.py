@@ -27,10 +27,15 @@ class Task:
 
 @dataclass(frozen=True, slots=True)
 class ReviewDocument:
-    """Итог ИИ-сценария: таски и номера прошлых тасок, которые он считает закрытыми."""
+    """Итог ИИ-сценария: таски и номера прошлых тасок, которые он считает закрытыми.
+
+    ``partial`` — ревью прервано и проверило не всё: точкой отсчёта следующего
+    инкрементального ревью оно не становится.
+    """
 
     tasks: tuple[Task, ...]
     resolved: tuple[int, ...] = ()
+    partial: bool = False
 
 
 class _TaskModel(BaseModel):
@@ -53,7 +58,7 @@ def parse_tasks(text: str) -> tuple[Task, ...]:
 
 
 def parse_review(text: str) -> ReviewDocument:
-    """Разбирает ``[{"text", "path", "line"}]`` или ``{"tasks": [...], "resolved": [id]}``.
+    """Разбирает ``[{"text", "path", "line"}]`` или ``{"tasks", "resolved", "partial"}``.
 
     Модели любят оборачивать JSON в пояснения и ```-блоки: берётся фрагмент от первой
     ``[`` или ``{`` до последней парной скобки. Неразборчивый вывод — :class:`ValueError`.
@@ -64,8 +69,10 @@ def parse_review(text: str) -> ReviewDocument:
     except json.JSONDecodeError as error:
         raise ValueError(f"вывод — не JSON: {error}") from error
     resolved: object = []
+    partial = False
     if isinstance(parsed, dict):
         resolved = parsed.get("resolved") or []
+        partial = parsed.get("partial") is True
         parsed = parsed.get("tasks", [])
     try:
         models = _TASKS.validate_python(parsed)
@@ -73,7 +80,7 @@ def parse_review(text: str) -> ReviewDocument:
     except ValidationError as error:
         raise ValueError(f"неверный список тасок: {error}") from error
     tasks = tuple(Task(model.text, model.path or None, model.line) for model in models)
-    return ReviewDocument(tasks, tuple(dict.fromkeys(resolved_ids)))
+    return ReviewDocument(tasks, tuple(dict.fromkeys(resolved_ids)), partial=partial)
 
 
 def _json_fragment(text: str) -> str:

@@ -121,6 +121,7 @@ class ScenarioRecord:
     format_output: str = ""
     tasks: tuple[str, ...] = ()
     error: str = ""
+    partial: bool = False
 
     @classmethod
     def from_row(cls, row: sqlite3.Row) -> Self:
@@ -129,6 +130,7 @@ class ScenarioRecord:
         for column in ("id", "run_id", "position"):
             fields.pop(column)
         fields["outcome"] = Outcome(fields["outcome"])
+        fields["partial"] = bool(fields.get("partial"))
         joined = fields["tasks"]
         fields["tasks"] = tuple(joined.split(TASK_SEPARATOR)) if joined else ()
         return cls(**fields)

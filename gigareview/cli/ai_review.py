@@ -29,7 +29,6 @@ _EXIT_ERROR = 2
 #: Код gigacrew «ход остановлен ограничителем» (лимит шагов, контекста, серия ошибок):
 #: итог модель ещё подводит, но ревью могло не дойти до части изменений.
 _GIGACREW_STOPPED = "3"
-_PARTIAL_NOTE = "_Ревью прервано ограничителем gigacrew: проверены не все изменения._"
 
 
 def add_parser(sub: "argparse._SubParsersAction[argparse.ArgumentParser]") -> None:
@@ -82,8 +81,7 @@ async def _tasks(args: argparse.Namespace) -> int:
     scope = review_range(os.environ)
     diff = await git_output(Path.cwd(), "diff", "--no-color", "-U0", "-M", scope.base, "HEAD")
     anchored = anchor_findings(findings, changed_lines(diff))
-    note = _PARTIAL_NOTE if partial else ""
-    sys.stdout.write(f"{render_review(anchored, review.resolved, note=note)}\n")
+    sys.stdout.write(f"{render_review(anchored, review.resolved, partial=partial)}\n")
     return 0
 
 

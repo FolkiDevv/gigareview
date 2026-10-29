@@ -128,14 +128,16 @@ class RunRepository:
         """Последний коммит PR (не ``other_than``), чьё ревью сценарием попало в Bitbucket.
 
         Считаются только прогоны, опубликованные целиком (не сухой режим и не «PR изменился
-        во время прогона»), где сценарий отработал без ошибки.
+        во время прогона»), где сценарий отработал без ошибки и до конца: прерванное ревью
+        проверило не всё, и следующее начинается от прежней точки.
         """
         row = self._db.execute(
             "SELECT runs.commit_id FROM runs "
             "JOIN scenario_results ON scenario_results.run_id = runs.id "
             "WHERE runs.project = ? AND runs.repo = ? AND runs.pr_id = ? "
             "AND runs.commit_id != ? AND scenario_results.name = ? "
-            "AND scenario_results.outcome IN (?, ?) AND runs.published = 1 "
+            "AND scenario_results.outcome IN (?, ?) AND scenario_results.partial = 0 "
+            "AND runs.published = 1 "
             "ORDER BY runs.id DESC LIMIT 1",
             (
                 project,
