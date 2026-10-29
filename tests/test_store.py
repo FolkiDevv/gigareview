@@ -218,9 +218,16 @@ def test_comment_details_and_scenario_filter(store: Store) -> None:
     assert lint.details == TaskDetails("")
 
 
-def _reviewed(store: Store, commit: str, outcome: Outcome, *, published: bool = True) -> None:
+def _reviewed(
+    store: Store,
+    commit: str,
+    outcome: Outcome,
+    *,
+    published: bool = True,
+    partial: bool = False,
+) -> None:
     run_id = store.runs.create(_new(commit=commit))
-    store.runs.add_scenario(run_id, 0, _scenario("ai", outcome))
+    store.runs.add_scenario(run_id, 0, replace(_scenario("ai", outcome), partial=partial))
     if published:
         store.runs.mark_published(run_id)
 
@@ -238,6 +245,10 @@ def test_last_reviewed_commit(store: Store) -> None:
     assert last() == "second"
     assert last("other") == "now"
     assert last(scenario="lint") is None
+    _reviewed(store, "interrupted", Outcome.ISSUES, partial=True)
+    assert last("other") == "now"
+    assert store.runs.scenarios(5)[0].partial is False
+    assert store.runs.scenarios(6)[0].partial is True
 
 
 def test_migration_adds_task_details_and_published(tmp_path: Path) -> None:

@@ -281,4 +281,5 @@ def _record(report: ScenarioReport) -> ScenarioRecord:
         format_output="" if formatting is None else f"{formatting.output}{formatting.stderr}",
         tasks=tuple(task.text for task in report.tasks),
         error=report.error,
+        partial=report.partial,
     )

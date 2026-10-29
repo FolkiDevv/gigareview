@@ -88,5 +88,11 @@ UPDATE runs SET published = 1
     WHERE id IN (SELECT run_id FROM bb_comments WHERE kind = 'summary');
 """
 
+# Сценарий отработал не до конца (gigacrew остановлен ограничителем): такой прогон не
+# становится точкой отсчёта инкрементального ревью.
+_PARTIAL = """
+ALTER TABLE scenario_results ADD COLUMN partial INTEGER NOT NULL DEFAULT 0;
+"""
+
 #: Миграции по порядку: i-я переводит базу с версии i на i + 1.
-MIGRATIONS: tuple[str, ...] = (_INITIAL, _REVIEW_STATE)
+MIGRATIONS: tuple[str, ...] = (_INITIAL, _REVIEW_STATE, _PARTIAL)

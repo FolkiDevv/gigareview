@@ -261,6 +261,23 @@ def test_parse_review_with_resolved() -> None:
     assert parse_review('[{"text": "b"}]').resolved == ()
     with pytest.raises(ValueError, match="тасок"):
         parse_review('{"tasks": [], "resolved": ["x"]}')
+    assert parse_review('{"tasks": [{"text": "a"}], "partial": true}').partial
+    with pytest.raises(ValueError, match="тасок"):
+        parse_review('{"tasks": [{"text": "a"}], "partial": "true"}')
+
+
+def test_partial_document_reaches_report(tmp_path: Path) -> None:
+    document = '{"tasks": [{"text": "x"}], "partial": true}'
+    report = _run(tmp_path, kind="ai", run=f"echo '{document}'; exit 1")
+    assert report.outcome is Outcome.ISSUES
+    assert report.partial
+
+
+def test_partial_review_without_issues_is_error(tmp_path: Path) -> None:
+    document = '{"tasks": [], "partial": true}'
+    report = _run(tmp_path, kind="ai", incremental=True, run=f"echo '{document}'")
+    assert report.outcome is Outcome.ERROR
+    assert "прервано" in report.error
 
 
 def test_summary_text_incremental_counts() -> None:

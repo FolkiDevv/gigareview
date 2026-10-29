@@ -292,9 +292,22 @@ def test_cli_check(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixtur
     assert _main(monkeypatch, strict, _ANSWER) == 0
     assert _main(monkeypatch, ["tasks", "--check"], "garbage") == 2
     assert "findings" in capsys.readouterr().err
-    monkeypatch.setenv("GR_RUN_EXIT", "3")
+    monkeypatch.setenv("GR_RUN_EXIT", "1")
     assert _main(monkeypatch, ["tasks", "--check"], _ANSWER) == 2
-    assert "кодом 3" in capsys.readouterr().err
+    assert "кодом 1" in capsys.readouterr().err
+
+
+def test_cli_check_accepts_stopped_gigacrew_with_answer(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("GR_RUN_EXIT", "3")
+    assert _main(monkeypatch, ["tasks", "--check"], _ANSWER) == 1
+    assert "к публикации: 1" in capsys.readouterr().out
+    empty = '```json\n{"findings": [], "resolved": [5]}\n```'
+    assert _main(monkeypatch, ["tasks", "--check"], empty) == 2
+    assert "неполное" in capsys.readouterr().err
+    assert _main(monkeypatch, ["tasks", "--check"], "garbage") == 2
 
 
 def test_cli_format_anchors_tasks(
@@ -305,6 +318,7 @@ def test_cli_format_anchors_tasks(
     monkeypatch.chdir(repo.path)
     monkeypatch.setenv("MERGE_BASE", repo.base)
     monkeypatch.setenv("GR_PREV_COMMIT", "")
+    monkeypatch.setenv("GR_RUN_EXIT", "0")
     answer = (
         '```json\n{"findings": [{"path": "app.py", "line": 1, "end_line": 3, '
         '"title": "t"}], "resolved": [9]}\n```'
@@ -313,3 +327,11 @@ def test_cli_format_anchors_tasks(
     rendered = json.loads(capsys.readouterr().out)
     assert rendered["tasks"][0]["line"] == 2
     assert rendered["resolved"] == [9]
+    assert "прервано" not in rendered["tasks"][0]["text"]
+    monkeypatch.setenv("GR_RUN_EXIT", "3")
+    assert _main(monkeypatch, ["tasks"], answer) == 0
+    stopped = json.loads(capsys.readouterr().out)
+    assert stopped["tasks"][0]["text"].startswith("**🟠 Ошибка: t**\n\n_Ревью прервано")
+    assert stopped["partial"] is True
+    assert parse_review(json.dumps(stopped)).partial
+    assert rendered["partial"] is False

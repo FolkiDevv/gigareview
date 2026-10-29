@@ -2,7 +2,7 @@
 
 import time
 from collections.abc import Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from types import MappingProxyType
 
@@ -33,7 +33,8 @@ class ScenarioReport:
     """Итог сценария: исход, результаты шагов, таски и текст ошибки.
 
     ``resolved`` — прошлые таски, которые инкрементальный сценарий считает закрытыми;
-    ``kept`` — сколько его прошлых тасок остаются открытыми (считает пайплайн).
+    ``kept`` — сколько его прошлых тасок остаются открытыми (считает пайплайн);
+    ``partial`` — ревью прервано и проверило не всё.
     """
 
     scenario: Scenario
@@ -46,6 +47,7 @@ class ScenarioReport:
     error: str = ""
     resolved: tuple[int, ...] = ()
     kept: int = 0
+    partial: bool = False
 
 
 @dataclass(slots=True)
@@ -119,19 +121,18 @@ class _Runner:
             document = self._parse(text)
         except ValueError as error:
             return self._failed(steps, f"не удалось разобрать таски: {error}")
+        if outcome is Outcome.PASSED and document.partial:
+            # Прерванное ревью без замечаний не повод одобрять PR.
+            return self._failed(steps, "ревью прервано и проверило не все изменения")
         if outcome is Outcome.PASSED:
-            return self._report(steps, Outcome.PASSED, resolved=document.resolved)
+            # Без замечаний таски не публикуются: из итога берутся только закрытые.
+            return self._report(steps, Outcome.PASSED, replace(document, tasks=()))
         if not document.tasks:
             return self._failed(
                 steps,
                 "не удалось разобрать таски: валидация нашла замечания, а список тасок пуст",
             )
-        return self._report(
-            steps,
-            Outcome.ISSUES,
-            tasks=document.tasks,
-            resolved=document.resolved,
-        )
+        return self._report(steps, Outcome.ISSUES, document)
 
     def _parse(self, text: str) -> ReviewDocument:
         """Итог из текста: весь текст — одна таска, у ИИ-сценария — JSON."""
@@ -165,11 +166,11 @@ class _Runner:
         self,
         steps: _Steps,
         outcome: Outcome,
+        document: ReviewDocument | None = None,
         *,
-        tasks: tuple[Task, ...] = (),
         error: str = "",
-        resolved: tuple[int, ...] = (),
     ) -> ScenarioReport:
+        document = document or ReviewDocument(())
         return ScenarioReport(
             scenario=self._scenario,
             outcome=outcome,
@@ -177,9 +178,10 @@ class _Runner:
             duration=time.monotonic() - self._started,
             validation=steps.validation,
             formatting=steps.formatting,
-            tasks=tasks,
+            tasks=document.tasks,
             error=error,
-            resolved=resolved,
+            resolved=document.resolved,
+            partial=document.partial,
         )
 
     def _failed(self, steps: _Steps, error: str) -> ScenarioReport:

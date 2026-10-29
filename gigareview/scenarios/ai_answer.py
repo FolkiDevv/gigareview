@@ -18,6 +18,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_valida
 from gigareview.errors import ScenarioError
 
 __all__ = [
+    "PARTIAL_NOTE",
     "Finding",
     "Review",
     "Selection",
@@ -34,6 +35,9 @@ _HUNK = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@")
 #: Сколько последних символов вывода просматривается без ```json-блока.
 _TAIL_CHARS = 100_000
 _MAX_CONFIDENCE = 100
+
+#: Пометка в тасках прерванного ревью.
+PARTIAL_NOTE = "_Ревью прервано ограничителем gigacrew: проверены не все изменения._"
 _BEFORE: Final = "before"
 
 
@@ -206,20 +210,32 @@ def anchor_findings(
     return anchored
 
 
-def render_review(findings: Sequence[Finding], resolved: Sequence[int]) -> str:
-    """Итог для gigareview: ``{"tasks": [{"text", "path", "line"}], "resolved": [...]}``."""
+def render_review(
+    findings: Sequence[Finding],
+    resolved: Sequence[int],
+    *,
+    partial: bool = False,
+) -> str:
+    """Итог для gigareview: ``{"tasks": [{"text", "path", "line"}], "resolved", "partial"}``.
+
+    ``partial`` — ревью прервано: в тасках — пометка, а gigareview не берёт такой прогон
+    точкой отсчёта следующего инкрементального ревью.
+    """
+    note = PARTIAL_NOTE if partial else ""
     tasks = [
-        {"text": _task_text(finding), "path": finding.path, "line": finding.line}
+        {"text": _task_text(finding, note), "path": finding.path, "line": finding.line}
         for finding in findings
     ]
-    return json.dumps({"tasks": tasks, "resolved": list(resolved)}, ensure_ascii=False, indent=2)
+    document = {"tasks": tasks, "resolved": list(resolved), "partial": partial}
+    return json.dumps(document, ensure_ascii=False, indent=2)
 
 
-def _task_text(finding: Finding) -> str:
+def _task_text(finding: Finding, note: str) -> str:
     """Текст таски: серьёзность и заголовок, участок, суть и как исправить."""
     label = _LABELS[finding.severity]
     header = f"**{label}: {finding.title}**" if finding.title else f"**{label}**"
-    parts = [header]
+    # Пометка — сразу после заголовка: длинный текст таски обрезается с конца.
+    parts = [header, note] if note else [header]
     if (
         finding.line is not None
         and finding.end_line is not None
