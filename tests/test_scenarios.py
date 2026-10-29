@@ -281,6 +281,21 @@ def test_partial_review_without_issues_is_error(tmp_path: Path, options: dict[st
     assert "прервано" in report.error
 
 
+def test_parse_review_skips_bracketed_log_lines() -> None:
+    text = '[INFO] start\n[1-40] read\n{"tasks": [{"text": "a"}], "partial": true}\n[done]'
+    document = parse_review(text)
+    assert document.tasks == (Task("a"),)
+    assert document.partial
+    with pytest.raises(ValueError, match="JSON"):
+        parse_review("[INFO] start [x]")
+
+
+def test_partial_after_log_lines_is_error(tmp_path: Path) -> None:
+    document = '{"tasks": [], "partial": true}'
+    report = _run(tmp_path, kind="ai", run=f"echo '[INFO] start'; echo '{document}'")
+    assert report.outcome is Outcome.ERROR
+
+
 @pytest.mark.parametrize("output", ["всё хорошо", '{"tasks": [], "partial": "да"}'])
 def test_ai_pass_with_other_output_still_passes(tmp_path: Path, output: str) -> None:
     report = _run(tmp_path, kind="ai", run=f"echo '{output}'")

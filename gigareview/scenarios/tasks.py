@@ -51,6 +51,8 @@ class _TaskModel(BaseModel):
 
 _TASKS = TypeAdapter(list[_TaskModel])
 _RESOLVED = TypeAdapter(list[int])
+#: Сколько последних символов вывода просматривается в поисках итога.
+_TAIL_CHARS = 200_000
 _PARTIAL = TypeAdapter(StrictBool)
 
 
@@ -63,13 +65,16 @@ def parse_review(text: str) -> ReviewDocument:
     """Разбирает ``[{"text", "path", "line"}]`` или ``{"tasks", "resolved", "partial"}``.
 
     Модели любят оборачивать JSON в пояснения и ```-блоки: берётся фрагмент от первой
-    ``[`` или ``{`` до последней парной скобки. Неразборчивый вывод — :class:`ValueError`.
+    ``[`` или ``{`` до последней парной скобки. Не JSON (перед итогом — строки лога со
+    скобками, ``[INFO] …``) — последнее JSON-значение вывода. Неразборчивый вывод —
+    :class:`ValueError`.
     """
-    fragment = _json_fragment(text)
     try:
-        parsed = json.loads(fragment)
+        parsed = json.loads(_json_fragment(text))
     except json.JSONDecodeError as error:
-        raise ValueError(f"вывод — не JSON: {error}") from error
+        parsed = _last_json(text)
+        if parsed is None:
+            raise ValueError(f"вывод — не JSON: {error}") from error
     resolved: object = []
     partial_raw: object = False
     if isinstance(parsed, dict):
@@ -85,6 +90,25 @@ def parse_review(text: str) -> ReviewDocument:
         raise ValueError(f"неверный список тасок: {error}") from error
     tasks = tuple(Task(model.text, model.path or None, model.line) for model in models)
     return ReviewDocument(tasks, tuple(dict.fromkeys(resolved_ids)), partial=partial)
+
+
+def _last_json(text: str) -> object | None:
+    """Последнее JSON-значение (объект или список) в тексте; вложенные не считаются."""
+    decoder = json.JSONDecoder()
+    found: object | None = None
+    index = 0
+    tail = text[-_TAIL_CHARS:]
+    while True:
+        starts = [
+            position for position in (tail.find("[", index), tail.find("{", index)) if position >= 0
+        ]
+        if not starts:
+            return found
+        start = min(starts)
+        try:
+            found, index = decoder.raw_decode(tail, start)
+        except json.JSONDecodeError:
+            index = start + 1
 
 
 def _json_fragment(text: str) -> str:
