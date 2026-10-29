@@ -206,16 +206,24 @@ def anchor_findings(
     return anchored
 
 
-def render_review(findings: Sequence[Finding], resolved: Sequence[int]) -> str:
-    """Итог для gigareview: ``{"tasks": [{"text", "path", "line"}], "resolved": [...]}``."""
+def render_review(
+    findings: Sequence[Finding],
+    resolved: Sequence[int],
+    *,
+    note: str = "",
+) -> str:
+    """Итог для gigareview: ``{"tasks": [{"text", "path", "line"}], "resolved": [...]}``.
+
+    ``note`` — пометка в конце каждой таски (например, что ревью прервано).
+    """
     tasks = [
-        {"text": _task_text(finding), "path": finding.path, "line": finding.line}
+        {"text": _task_text(finding, note), "path": finding.path, "line": finding.line}
         for finding in findings
     ]
     return json.dumps({"tasks": tasks, "resolved": list(resolved)}, ensure_ascii=False, indent=2)
 
 
-def _task_text(finding: Finding) -> str:
+def _task_text(finding: Finding, note: str) -> str:
     """Текст таски: серьёзность и заголовок, участок, суть и как исправить."""
     label = _LABELS[finding.severity]
     header = f"**{label}: {finding.title}**" if finding.title else f"**{label}**"
@@ -230,6 +238,8 @@ def _task_text(finding: Finding) -> str:
         parts.append(finding.body)
     if finding.suggestion:
         parts.append(f"**Как исправить:** {finding.suggestion}")
+    if note:
+        parts.append(note)
     return "\n\n".join(parts)
 
 
