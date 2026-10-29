@@ -393,6 +393,28 @@ def test_tasks_left_open_by_user_still_need_work(
     assert [task.comment_id for task in store.comments.open_tasks("PROJ", "repo", 1)] == [three]
 
 
+def test_task_reopened_by_user_needs_work_again(
+    tmp_path: Path,
+    store: Store,
+    origin: Origin,
+) -> None:
+    first = '{"tasks": [{"text": "one"}]}'
+    _, api = _review(tmp_path, store, origin, scenarios=_incremental(f"echo '{first}'; exit 1"))
+    task = api.tasks[0].id
+    api.states[task] = "RESOLVED"
+    quiet = _incremental("echo '{\"tasks\": []}'")
+    run, api = _review(tmp_path, store, origin, api=api, scenarios=quiet)
+    assert run.status is RunStatus.PASSED
+    api.states[task] = "OPEN"
+    check = _incremental(f'grep -q \'"id": {task}\' "$GR_OPEN_TASKS" || exit 2; echo "[]"')
+    run, api = _review(tmp_path, store, origin, api=api, scenarios=check)
+    assert run.status is RunStatus.ISSUES
+    assert api.statuses[-1] == (1, ReviewStatus.NEEDS_WORK)
+    assert [record.comment_id for record in store.comments.open_tasks("PROJ", "repo", 1)] == [
+        task,
+    ]
+
+
 def test_task_state_error_fails_run(tmp_path: Path, store: Store, origin: Origin) -> None:
     first = _incremental('echo \'[{"text": "a"}]\'; exit 1')
     _, api = _review(tmp_path, store, origin, scenarios=first)

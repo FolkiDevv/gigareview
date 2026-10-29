@@ -54,9 +54,21 @@ class CommentRepository:
         scenario: str | None = None,
     ) -> list[CommentRecord]:
         """Неразрешённые таски демона в PR (все или одного сценария ``scenario``)."""
+        return [
+            record for record in self.tasks(project, repo, pr_id, scenario) if not record.resolved
+        ]
+
+    def tasks(
+        self,
+        project: str,
+        repo: str,
+        pr_id: int,
+        scenario: str | None = None,
+    ) -> list[CommentRecord]:
+        """Все таски демона в PR, и закрытые (все или одного сценария ``scenario``)."""
         rows = self._db.execute(
             "SELECT * FROM bb_comments WHERE project = ? AND repo = ? AND pr_id = ? "
-            "AND kind = ? AND resolved = 0 AND (? IS NULL OR scenario = ?) ORDER BY id",
+            "AND kind = ? AND (? IS NULL OR scenario = ?) ORDER BY id",
             (project, repo, pr_id, CommentKind.TASK.value, scenario, scenario),
         )
         return [_record(row) for row in rows]
@@ -64,6 +76,10 @@ class CommentRepository:
     def mark_resolved(self, record_id: int) -> None:
         """Таска закрыта в Bitbucket."""
         self._db.execute("UPDATE bb_comments SET resolved = 1 WHERE id = ?", (record_id,))
+
+    def mark_open(self, record_id: int) -> None:
+        """Закрытую таску снова открыли в Bitbucket."""
+        self._db.execute("UPDATE bb_comments SET resolved = 0 WHERE id = ?", (record_id,))
 
     def for_run(self, run_id: int) -> list[CommentRecord]:
         """Комментарии, опубликованные прогоном."""
