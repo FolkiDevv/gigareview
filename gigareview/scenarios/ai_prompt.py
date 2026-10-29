@@ -31,6 +31,8 @@ _MAX_COMMITS = 50
 _MAX_FILES = 200
 _MAX_DESCRIPTION_CHARS = 4000
 _MAX_TASK_CHARS = 400
+#: Сколько последних закрытых людьми тасок попадает в промпт.
+_MAX_DISMISSED = 30
 
 #: Файлы, которые не ревьюятся: lock-файлы, сгенерированные и минифицированные.
 SKIPPED_FILES = (
@@ -93,6 +95,12 @@ the review.
 _OPEN_TASKS_RULE = """
 Do not report them again. Check each one against the current code: if it is fixed or no \
 longer applies, put its id into "resolved"; otherwise leave it out.
+"""
+
+_DISMISSED_RULE = """
+People reviewed these findings and closed them as false positives. Do not report them \
+again, nor the same problem in other words or at a nearby line, and do not put their ids \
+into "resolved".
 """
 
 _UNTRUSTED = """\
@@ -163,9 +171,12 @@ def review_range(env: Mapping[str, str]) -> ReviewRange:
     return ReviewRange(previous or merge_base, merge_base, previous)
 
 
-def load_open_tasks(env: Mapping[str, str]) -> list[OpenTask]:
-    """Открытые таски сценария из файла ``$GR_OPEN_TASKS`` (нет файла — нет тасок)."""
-    path = env.get("GR_OPEN_TASKS", "")
+def load_open_tasks(env: Mapping[str, str], env_name: str = "GR_OPEN_TASKS") -> list[OpenTask]:
+    """Таски сценария из файла ``$GR_OPEN_TASKS`` (нет файла — нет тасок).
+
+    ``env_name = "GR_DISMISSED_TASKS"`` — таски, закрытые людьми как ложные срабатывания.
+    """
+    path = env.get(env_name, "")
     if not path:
         return []
     try:
@@ -211,12 +222,13 @@ async def build_prompt(env: Mapping[str, str], repo_dir: Path, *, focus: str = "
         _scope_section(scope, commits, files),
         _RULES,
         _open_tasks_section(load_open_tasks(env)),
+        _dismissed_section(load_open_tasks(env, "GR_DISMISSED_TASKS")),
         _UNTRUSTED,
         _ANSWER,
     ]
     if focus.strip():
         sections.append(f"# Additional focus\n{focus.strip()}\n")
-    return "\n".join(sections)
+    return "\n".join(section for section in sections if section)
 
 
 async def _changed_files(repo_dir: Path, scope: ReviewRange) -> list[str]:
@@ -308,14 +320,28 @@ def _open_tasks_section(tasks: Sequence[OpenTask]) -> str:
     if not tasks:
         lines.extend(("None.", ""))
         return "\n".join(lines)
-    for task in tasks:
-        location = task.path or "(no file)"
-        if task.path and task.line:
-            location = f"{task.path}:{task.line}"
-        text = " ".join(task.text.split())[:_MAX_TASK_CHARS]
-        lines.append(f"- id {task.id}, {location}: {text}")
+    lines.extend(_task_line(task) for task in tasks)
     lines.append(_OPEN_TASKS_RULE)
     return "\n".join(lines)
+
+
+def _dismissed_section(tasks: Sequence[OpenTask]) -> str:
+    """Таски, закрытые людьми: не повторять (последние :data:`_MAX_DISMISSED`)."""
+    if not tasks:
+        return ""
+    lines = ["# Findings dismissed by people"]
+    lines.extend(_task_line(task) for task in tasks[-_MAX_DISMISSED:])
+    lines.append(_DISMISSED_RULE)
+    return "\n".join(lines)
+
+
+def _task_line(task: OpenTask) -> str:
+    """Строка таски в промпте: id, место и сокращённый текст."""
+    location = task.path or "(no file)"
+    if task.path and task.line:
+        location = f"{task.path}:{task.line}"
+    text = " ".join(task.text.split())[:_MAX_TASK_CHARS]
+    return f"- id {task.id}, {location}: {text}"
 
 
 def open_tasks_json(tasks: Sequence[OpenTask]) -> str:

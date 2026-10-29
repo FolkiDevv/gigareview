@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any, override
 
 import pytest
-from fakes import FakeBitbucket, Origin, git, make_config, make_pr
+from fakes import FakeBitbucket, Origin, git, make_config, make_pr, with_status
 
 from gigareview.bitbucket import PullRequest
 from gigareview.config import SAMPLE_CONFIG
@@ -67,7 +67,8 @@ def test_passing_run_without_approve_keeps_status(
     assert run.published
     assert len(api.summaries) == 1
     assert "Итог: ✅ замечаний нет\n" in api.summaries[0].text
-    assert "одобрен" not in api.summaries[0].text
+    assert "PR одобрен" not in api.summaries[0].text
+    assert "и одобрит PR" not in api.summaries[0].text
     assert api.statuses == []
 
 
@@ -418,7 +419,7 @@ def test_task_reopened_by_user_needs_work_again(
 def test_task_state_error_fails_run(tmp_path: Path, store: Store, origin: Origin) -> None:
     first = _incremental('echo \'[{"text": "a"}]\'; exit 1')
     _, api = _review(tmp_path, store, origin, scenarios=first)
-    api.comment_error = BitbucketError("denied", status_code=403)
+    api.tasks_error = BitbucketError("denied", status_code=403)
     run, api = _review(tmp_path, store, origin, api=api, scenarios=first)
     assert run.status is RunStatus.ERROR
     assert "denied" in run.error
@@ -590,3 +591,108 @@ def test_pr_changed_after_simple_phase_skips_ai(
     assert "оставшиеся сценарии не запускались" in run.error
     assert [record.name for record in store.runs.scenarios(run.id)] == ["lint"]
     assert api.statuses == []
+
+
+def _review_pr(
+    tmp_path: Path,
+    store: Store,
+    origin: Origin,
+    api: FakeBitbucket,
+    **config_options: Any,
+) -> RunRecord:
+    """Прогон по PR из ``api.prs`` (с его статусом ревьюера и счётчиками)."""
+    config = make_config(tmp_path / "home", origin.url, **config_options)
+    pr = api.prs[0]
+    run_id = store.runs.create(new_run(pr, Trigger.AUTO, fingerprint="fp", dry_run=False))
+    asyncio.run(Reviewer(config, store, api).review(run_id, pr))
+    run = store.runs.get(run_id)
+    assert run is not None
+    return run
+
+
+def test_first_run_does_not_list_tasks(tmp_path: Path, store: Store, origin: Origin) -> None:
+    _, api = _review(tmp_path, store, origin, scenarios=_incremental("echo '[]'"))
+    assert "list_tasks" not in api.calls
+
+
+def test_one_task_listing_per_phase_for_many_old_tasks(
+    tmp_path: Path,
+    store: Store,
+    origin: Origin,
+) -> None:
+    many = json.dumps({"tasks": [{"text": f"t{index}"} for index in range(8)]})
+    scenarios = {"lint": {"run": "echo bad", "validate": "exit 1"}}
+    scenarios.update(_incremental(f"echo '{many}'; exit 1"))
+    _, api = _review(tmp_path, store, origin, scenarios=scenarios)
+    api.calls.clear()
+    _review(tmp_path, store, origin, api=api, scenarios=scenarios)
+    assert api.calls.count("list_tasks") == 2
+
+
+def test_status_is_not_set_again(tmp_path: Path, store: Store, origin: Origin) -> None:
+    scenarios = {"lint": {"run": "echo bad", "validate": "exit 1"}}
+    _, api = _review(tmp_path, store, origin, scenarios=scenarios)
+    _review(tmp_path, store, origin, api=api, scenarios=scenarios)
+    assert api.statuses == [(1, ReviewStatus.NEEDS_WORK)]
+
+
+def test_clean_run_without_approve_lifts_needs_work(
+    tmp_path: Path,
+    store: Store,
+    origin: Origin,
+) -> None:
+    api = FakeBitbucket(prs=[with_status(make_pr(commit=origin.feature), "NEEDS_WORK")])
+    run = _review_pr(tmp_path, store, origin, api, daemon_extra={"approve": False})
+    assert run.status is RunStatus.PASSED
+    assert api.statuses == [(1, ReviewStatus.UNAPPROVED)]
+
+
+def test_new_commit_withdraws_approval_until_checked(
+    tmp_path: Path,
+    store: Store,
+    origin: Origin,
+) -> None:
+    scenarios = {"lint": {"run": "echo bad", "validate": "exit 1"}}
+    api = FakeBitbucket(prs=[with_status(make_pr(commit=origin.feature), "APPROVED")])
+    _review_pr(tmp_path, store, origin, api, scenarios=scenarios)
+    assert api.statuses == [(1, ReviewStatus.UNAPPROVED), (1, ReviewStatus.NEEDS_WORK)]
+    events = [event.message for event in store.events.list(None, limit=50)]
+    assert any("одобрение снято" in message for message in events)
+
+
+def test_rerun_of_reviewed_commit_keeps_approval(
+    tmp_path: Path,
+    store: Store,
+    origin: Origin,
+) -> None:
+    _, api = _review(tmp_path, store, origin)
+    assert api.statuses == [(1, ReviewStatus.APPROVED)]
+    _review_pr(tmp_path, store, origin, api)
+    assert api.statuses == [(1, ReviewStatus.APPROVED)]
+
+
+def test_dry_run_keeps_approval(tmp_path: Path, store: Store, origin: Origin) -> None:
+    api = FakeBitbucket(prs=[with_status(make_pr(commit=origin.feature), "APPROVED")])
+    _review(tmp_path, store, origin, api=api, dry_run=True)
+    assert api.statuses == []
+
+
+def test_dismissed_tasks_go_to_their_own_file(
+    tmp_path: Path,
+    store: Store,
+    origin: Origin,
+) -> None:
+    first = '{"tasks": [{"text": "one"}, {"text": "two"}]}'
+    _, api = _review(tmp_path, store, origin, scenarios=_incremental(f"echo '{first}'; exit 1"))
+    one, two = (task.id for task in api.tasks)
+    api.states[two] = "RESOLVED"
+    check = (
+        f'grep -q \'"id": {two}\' "$GR_DISMISSED_TASKS" || exit 2; '
+        f'grep -q \'"id": {two}\' "$GR_OPEN_TASKS" && exit 2; '
+        f'grep -q \'"id": {one}\' "$GR_OPEN_TASKS" || exit 2; '
+        f"echo '{{\"resolved\": [{one}]}}'"
+    )
+    run, api = _review(tmp_path, store, origin, api=api, scenarios=_incremental(check))
+    assert run.status is RunStatus.PASSED
+    dismissed = store.comments.dismissed_tasks("PROJ", "repo", 1, "ai")
+    assert [record.comment_id for record in dismissed] == [two]

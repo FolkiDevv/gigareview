@@ -2,3 +2,4 @@
 
 from gigareview.pipeline.review import Reviewer as Reviewer
 from gigareview.pipeline.review import new_run as new_run
+from gigareview.pipeline.watch import TaskWatch as TaskWatch

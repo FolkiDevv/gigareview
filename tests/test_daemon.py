@@ -1,16 +1,17 @@
 import asyncio
 import sqlite3
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
-from fakes import FakeBitbucket, Origin, make_config, make_pr
+from fakes import FakeBitbucket, Origin, make_config, make_pr, with_status
 
 from gigareview.config import SAMPLE_CONFIG
 from gigareview.daemon import Daemon
 from gigareview.errors import BitbucketError, ConfigError, GigaReviewError
 from gigareview.pipeline import new_run
-from gigareview.statuses import EventLevel, RunStatus, Trigger
-from gigareview.store import RunFilter, Store
+from gigareview.statuses import EventLevel, ReviewStatus, RunStatus, Trigger
+from gigareview.store import CommentKind, RunFilter, Store, TaskDetails
 
 
 def _daemon(
@@ -190,3 +191,29 @@ def test_paused_daemon_does_not_poll(tmp_path: Path, store: Store) -> None:
 
     asyncio.run(scenario())
     assert store.queries.count(RunFilter()) == 0
+
+
+def _published_issues(store: Store, pr_id: int) -> None:
+    """Прогон с замечаниями, опубликованный на коммите PR, и его таска."""
+    run_id = store.runs.create(new_run(make_pr(pr_id), Trigger.AUTO, fingerprint="", dry_run=False))
+    store.runs.finish(run_id, RunStatus.ISSUES)
+    store.runs.mark_published(run_id)
+    store.comments.add(run_id, 500 + pr_id, 0, CommentKind.TASK, "ai", TaskDetails("t"))
+
+
+def test_poll_hands_skipped_prs_to_task_watch(tmp_path: Path, store: Store) -> None:
+    _published_issues(store, 1)
+    _published_issues(store, 2)
+    api = FakeBitbucket(
+        prs=[with_status(make_pr(1), "NEEDS_WORK"), with_status(make_pr(2), "NEEDS_WORK")],
+    )
+    config = make_config(tmp_path / "home", "unused", daemon_extra={"resolve_delay_minutes": 0})
+    daemon = Daemon(config, store, api)
+    api.tasks_error = BitbucketError("denied", status_code=403)
+    assert asyncio.run(daemon.poll()) == 0
+    warnings = [event.message for event in store.events.list(EventLevel.WARNING)]
+    assert sum("denied" in message for message in warnings) == 2
+    api.tasks_error = None
+    store.watch.save(replace(store.watch.get("PROJ", "repo", 1, 1), retry_after=None))
+    asyncio.run(daemon.poll())
+    assert api.statuses == [(1, ReviewStatus.APPROVED)]

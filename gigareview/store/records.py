@@ -8,6 +8,7 @@ from enum import StrEnum, unique
 from typing import Any, Self
 
 from gigareview.statuses import EventLevel, Outcome, RunStatus, Trigger
+from gigareview.store.clock import parse_stamp
 
 __all__ = [
     "CommentKind",
@@ -20,6 +21,7 @@ __all__ = [
     "RunStats",
     "ScenarioRecord",
     "TaskDetails",
+    "TaskWatchRecord",
 ]
 
 
@@ -83,7 +85,7 @@ class RunRecord:
         fields["dry_run"] = bool(fields["dry_run"])
         fields["published"] = bool(fields.get("published"))
         for stamp in ("created_at", "started_at", "finished_at"):
-            fields[stamp] = _parse_time(fields[stamp])
+            fields[stamp] = parse_stamp(fields[stamp])
         return cls(**fields)
 
     @property
@@ -161,6 +163,27 @@ class CommentRecord:
     scenario: str
     resolved: bool
     details: TaskDetails
+    dismissed: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class TaskWatchRecord:
+    """Наблюдение за PR без нового коммита после прогона ``run_id`` с замечаниями.
+
+    ``task_counts`` — счётчики тасок PR при последней сверке («открыто/закрыто», пусто — не
+    сверялись или Bitbucket их не отдаёт); ``clear_since`` — с какого момента все таски
+    демона закрыты; ``settled_status`` — статус ревью, который поставило наблюдение.
+    """
+
+    project: str
+    repo: str
+    pr_id: int
+    run_id: int
+    task_counts: str = ""
+    checked_at: datetime | None = None
+    retry_after: datetime | None = None
+    clear_since: datetime | None = None
+    settled_status: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -209,8 +232,3 @@ class PullRequestSummary:
 
     last_run: RunRecord
     runs_count: int
-
-
-def _parse_time(stamp: str | None) -> datetime | None:
-    """ISO-время из базы в ``datetime`` (``None`` остаётся ``None``)."""
-    return None if stamp is None else datetime.fromisoformat(stamp)

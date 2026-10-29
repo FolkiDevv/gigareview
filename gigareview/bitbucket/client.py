@@ -1,6 +1,7 @@
 """Асинхронный клиент Bitbucket Server REST API 1.0 (порт ``bb.py`` на httpx)."""
 
 import ssl
+from collections.abc import AsyncIterator, Awaitable, Callable
 from http import HTTPStatus
 from types import TracebackType
 from typing import Any, Self
@@ -16,9 +17,13 @@ from gigareview.statuses import ReviewStatus
 __all__ = ["BitbucketClient"]
 
 _API = "/rest/api/1.0"
-_PAGE_LIMIT = 50
+_PAGE_LIMIT = 100
 _TIMEOUT = 30.0
 _ERROR_BODY_CHARS = 500
+
+type _Json = dict[str, Any]
+#: Запрос с JSON-ответом (:meth:`BitbucketClient._json`).
+type _Fetch = Callable[..., Awaitable[_Json]]
 
 
 class BitbucketClient:
@@ -75,23 +80,8 @@ class BitbucketClient:
 
     async def list_review_prs(self) -> list[PullRequest]:
         """Открытые PR со всего сервера, где текущий пользователь — ревьюер (все страницы)."""
-        prs: list[PullRequest] = []
-        start = 0
-        while True:
-            page = await self._json(
-                "GET",
-                f"{_API}/dashboard/pull-requests",
-                params={
-                    "role": "REVIEWER",
-                    "state": "OPEN",
-                    "limit": str(_PAGE_LIMIT),
-                    "start": str(start),
-                },
-            )
-            prs.extend(PullRequest.model_validate(raw) for raw in page.get("values", []))
-            if page.get("isLastPage", True):
-                return prs
-            start = int(page["nextPageStart"])
+        pages = _pages(self._json, f"{_API}/dashboard/pull-requests", role="REVIEWER", state="OPEN")
+        return [PullRequest.model_validate(raw) async for raw in pages]
 
     async def get_pull_request(self, project: str, repo: str, pr_id: int) -> PullRequest:
         """PR по номеру."""
@@ -124,10 +114,14 @@ class BitbucketClient:
             raw = await self._json("POST", path, json=body)
         return Comment.model_validate(raw)
 
-    async def get_comment(self, pr: PullRequest, comment_id: int) -> Comment:
-        """Комментарий PR по номеру."""
-        raw = await self._json("GET", _comment_path(pr, comment_id))
-        return Comment.model_validate(raw)
+    async def list_tasks(self, pr: PullRequest) -> list[Comment]:
+        """Открытые таски PR одним обходом страниц ``blocker-comments``.
+
+        Сбой на любой странице — ошибка: по неполному списку открытые таски сочлись бы
+        закрытыми. Если сервер не учтёт фильтр, придут и закрытые — у них ``state``.
+        """
+        path = f"{_pr_path(pr.project, pr.repo, pr.id)}/blocker-comments"
+        return [Comment.model_validate(raw) async for raw in _pages(self._json, path, state="OPEN")]
 
     async def resolve_task(self, pr: PullRequest, comment_id: int, version: int) -> Comment:
         """Помечает таску выполненной; устаревшая версия — перечитывает и повторяет."""
@@ -170,7 +164,7 @@ class BitbucketClient:
         except BitbucketError as error:
             if error.status_code != HTTPStatus.CONFLICT:
                 raise
-            fresh = await self.get_comment(pr, comment_id)
+            fresh = Comment.model_validate(await self._json("GET", path))
             raw = await self._json("PUT", path, json={"version": fresh.version, **changes})
         return Comment.model_validate(raw)
 
@@ -200,6 +194,23 @@ class BitbucketClient:
             body = response.text[:_ERROR_BODY_CHARS]
             raise BitbucketError(f"{method} {path}: HTTP {code}: {body}", status_code=code)
         return response
+
+
+async def _pages(
+    fetch: _Fetch,
+    path: str,
+    **filters: str,
+) -> AsyncIterator[_Json]:
+    """Записи постраничного ответа ``path`` с фильтрами ``filters`` — все страницы."""
+    start = 0
+    while True:
+        query = {**filters, "limit": str(_PAGE_LIMIT), "start": str(start)}
+        page = await fetch("GET", path, params=query)
+        for raw in page.get("values", []):
+            yield raw
+        if page.get("isLastPage", True):
+            return
+        start = int(page["nextPageStart"])
 
 
 def _pr_path(project: str, repo: str, pr_id: int) -> str:

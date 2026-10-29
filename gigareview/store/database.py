@@ -11,6 +11,7 @@ from gigareview.store.queries import RunQueries
 from gigareview.store.runs import RunRepository
 from gigareview.store.schema import MIGRATIONS
 from gigareview.store.state import StateRepository
+from gigareview.store.watch import WatchRepository
 
 __all__ = ["Store"]
 
@@ -32,6 +33,7 @@ class Store:
         self.comments = CommentRepository(self._db)
         self.events = EventRepository(self._db)
         self.state = StateRepository(self._db)
+        self.watch = WatchRepository(self._db)
 
     def __enter__(self) -> Self:
         """База на время блока ``with``."""

@@ -4,7 +4,7 @@ from typing import Any
 
 import pytest
 
-from gigareview.config import Scenario
+from gigareview.config import DaemonSettings, Scenario
 from gigareview.process import ProcessOutcome
 from gigareview.scenarios import (
     ScenarioContext,
@@ -17,9 +17,9 @@ from gigareview.scenarios import (
     task_text,
 )
 from gigareview.scenarios import report as report_module
-from gigareview.scenarios.report import crash_text
+from gigareview.scenarios.report import crash_text, guide_text, settled_text, summary_table
 from gigareview.scenarios.tasks import parse_review
-from gigareview.statuses import Outcome, RunStatus
+from gigareview.statuses import Outcome, ReviewStatus, RunStatus
 
 
 def _scenario(**fields: Any) -> Scenario:
@@ -333,3 +333,34 @@ def test_summary_text_incremental_counts() -> None:
     assert "| ИИ | ❌ замечания: новых 1, открыто прежних 2, закрыто 1 |" in text
     assert "| ИИ | ✅ пройден: закрыто 1 |" in text
     assert "| ИИ | ✅ пройден |" in text
+
+
+def test_guide_follows_settings() -> None:
+    default = guide_text(DaemonSettings())
+    assert default.startswith("---\n**Как работать со мной**\n")
+    assert "закрыты и 15 мин нет новых коммитов, бот снимет «Требуются изменения» и одобрит PR" in (
+        default
+    )
+    quick = guide_text(DaemonSettings(resolve_delay_minutes=0, approve=False))
+    assert "Когда все таски бота закрыты, бот снимет «Требуются изменения». ИИ-ревью" in quick
+    assert "7.5 мин" in guide_text(DaemonSettings(resolve_delay_minutes=7.5))
+
+
+def test_summary_and_crash_end_with_guide() -> None:
+    text = summary_text([_report(Outcome.PASSED)], commit="c", run_url="http://x/runs/1")
+    assert text.index("Итог:") < text.index("[Подробности прогона]") < text.index("---\n**Как")
+    assert crash_text(commit="c", run_url="").endswith(guide_text(DaemonSettings()))
+
+
+def test_settled_text() -> None:
+    table = summary_table([_report(Outcome.ISSUES, tasks=(Task("a"),))], commit="c")
+    policy = DaemonSettings()
+    approved = settled_text(table, ReviewStatus.APPROVED, run_url="u", policy=policy)
+    assert approved.startswith(f"{table}\n\nИтог: ✅ замечания закрыты вручную — PR одобрен")
+    failed = settled_text(table, ReviewStatus.UNAPPROVED, run_url="", policy=policy)
+    assert "часть проверок не удалась" in failed
+    quiet = DaemonSettings(approve=False)
+    lifted = settled_text(table, ReviewStatus.UNAPPROVED, run_url="", policy=quiet)
+    assert "закрыты вручную — статус «Требуются изменения» снят\n" in lifted
+    reopened = settled_text("", ReviewStatus.NEEDS_WORK, run_url="", policy=policy)
+    assert reopened.startswith("Итог: ❌ есть замечания")

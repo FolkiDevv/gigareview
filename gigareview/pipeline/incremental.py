@@ -1,12 +1,11 @@
 """Инкрементальное ревью: коммит прошлого ревью сценария, его открытые таски и их судьба."""
 
+from collections.abc import Sequence
 from dataclasses import dataclass, replace
-from http import HTTPStatus
 from pathlib import Path
 
-from gigareview.bitbucket import BitbucketApi, PullRequest
+from gigareview.bitbucket import PullRequest
 from gigareview.config import Scenario
-from gigareview.errors import BitbucketError
 from gigareview.gitops import GitRepo
 from gigareview.scenarios import OpenTask, ScenarioReport, open_tasks_json
 from gigareview.statuses import Outcome
@@ -17,14 +16,17 @@ __all__ = ["History", "history_env", "scenario_history", "settle"]
 
 @dataclass(frozen=True, slots=True)
 class History:
-    """Прошлые ревью PR сценарием: коммит последнего (пусто — ревью с нуля) и открытые таски."""
+    """Прошлые ревью PR сценарием: коммит последнего (пусто — ревью с нуля) и его таски.
+
+    ``open_tasks`` — открытые таски, ``dismissed`` — закрытые людьми как ложные срабатывания.
+    """
 
     previous: str
     open_tasks: tuple[CommentRecord, ...]
+    dismissed: tuple[CommentRecord, ...] = ()
 
 
 async def scenario_history(
-    api: BitbucketApi,
     store: Store,
     pr: PullRequest,
     scenario: Scenario,
@@ -32,8 +34,8 @@ async def scenario_history(
 ) -> History:
     """История сценария в PR; коммит не предок текущего (force-push) — ревью с нуля.
 
-    Таски сверяются с Bitbucket: закрытые или удалённые вручную в историю не входят. У
-    инкрементального сценария сверяются и закрытые: открытая заново таска снова в истории.
+    Состояние тасок — из базы: перед этапом с инкрементальным сценарием и при каждой
+    публикации её сверяет снимок Bitbucket (``tracking.fetch_task_states``).
     """
     previous = store.runs.last_reviewed_commit(
         pr.project,
@@ -44,27 +46,28 @@ async def scenario_history(
     )
     if previous and not await GitRepo(repo_dir, "").is_ancestor(previous, pr.commit):
         previous = None
-    records = (store.comments.tasks if scenario.incremental else store.comments.open_tasks)(
-        pr.project,
-        pr.repo,
-        pr.id,
-        scenario.name,
+    key = (pr.project, pr.repo, pr.id, scenario.name)
+    return History(
+        previous or "",
+        tuple(store.comments.open_tasks(*key)),
+        tuple(store.comments.dismissed_tasks(*key)),
     )
-    tasks = [
-        record
-        for record in records
-        # Немного запросов, а ответ каждого нужно разобрать отдельно.
-        if await _still_open(api, store, pr, record)  # noqa: WPS476
-    ]
-    return History(previous or "", tuple(tasks))
 
 
 def history_env(history: History, artifacts: Path, scenario: Scenario) -> dict[str, str]:
-    """Переменные сценария: ``GR_PREV_COMMIT`` и файл открытых тасок ``GR_OPEN_TASKS``."""
-    path = artifacts / f"{scenario.name}.open-tasks.json"
-    tasks = [_open_task(record) for record in history.open_tasks]
-    path.write_text(open_tasks_json(tasks), encoding="utf-8")
-    return {"GR_PREV_COMMIT": history.previous, "GR_OPEN_TASKS": str(path)}
+    """Переменные сценария: ``GR_PREV_COMMIT`` и файлы тасок.
+
+    ``GR_OPEN_TASKS`` — открытые таски, ``GR_DISMISSED_TASKS`` — закрытые людьми.
+    """
+    open_path = artifacts / f"{scenario.name}.open-tasks.json"
+    dismissed_path = artifacts / f"{scenario.name}.dismissed-tasks.json"
+    _write_tasks(open_path, history.open_tasks)
+    _write_tasks(dismissed_path, history.dismissed)
+    return {
+        "GR_PREV_COMMIT": history.previous,
+        "GR_OPEN_TASKS": str(open_path),
+        "GR_DISMISSED_TASKS": str(dismissed_path),
+    }
 
 
 def settle(report: ScenarioReport, history: History) -> ScenarioReport:
@@ -86,30 +89,9 @@ def settle(report: ScenarioReport, history: History) -> ScenarioReport:
     return replace(report, outcome=outcome, resolved=resolved, kept=kept)
 
 
-async def _still_open(
-    api: BitbucketApi,
-    store: Store,
-    pr: PullRequest,
-    record: CommentRecord,
-) -> bool:
-    """Таска открыта в Bitbucket; база принимает её состояние оттуда.
-
-    Пользователь закрывает таски, с которыми не согласен: их нельзя держать за замечания.
-    Открытая им заново таска — снова замечание. Удалённая таска закрыта навсегда.
-    """
-    try:
-        comment = await api.get_comment(pr, record.comment_id)
-    except BitbucketError as error:
-        if error.status_code != HTTPStatus.NOT_FOUND:
-            raise
-        is_open = False
-    else:
-        is_open = comment.state != "RESOLVED"
-    if is_open and record.resolved:
-        store.comments.mark_open(record.id)
-    elif not is_open and not record.resolved:
-        store.comments.mark_resolved(record.id)
-    return is_open
+def _write_tasks(path: Path, records: Sequence[CommentRecord]) -> None:
+    """Файл тасок сценария: JSON-список ``[{"id", "text", "path", "line"}]``."""
+    path.write_text(open_tasks_json([_open_task(record) for record in records]), encoding="utf-8")
 
 
 def _open_task(record: CommentRecord) -> OpenTask:

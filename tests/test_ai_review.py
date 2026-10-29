@@ -335,3 +335,19 @@ def test_cli_format_anchors_tasks(
     assert stopped["partial"] is True
     assert parse_review(json.dumps(stopped)).partial
     assert rendered["partial"] is False
+
+
+def test_prompt_lists_dismissed_tasks(repo: _Repo, tmp_path: Path) -> None:
+    dismissed_file = tmp_path / "dismissed.json"
+    tasks = [OpenTask(id=index, text=f"ложное {index}") for index in range(1, 41)]
+    dismissed_file.write_text(open_tasks_json(tasks))
+    prompt = _prompt(repo, GR_DISMISSED_TASKS=str(dismissed_file))
+    section = prompt.split("# Findings dismissed by people")[1].split("# Untrusted")[0]
+    assert "- id 40, (no file): ложное 40" in section
+    assert "- id 10, " not in section
+    assert section.count("- id ") == 30
+    assert "closed them as false positives" in section
+
+
+def test_prompt_without_dismissed_tasks_has_no_section(repo: _Repo) -> None:
+    assert "dismissed by people" not in _prompt(repo)

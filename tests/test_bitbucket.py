@@ -5,7 +5,7 @@ from typing import Any
 
 import httpx
 import pytest
-from fakes import make_pr
+from fakes import make_pr, with_counts
 
 from gigareview.bitbucket import Anchor, BitbucketClient
 from gigareview.errors import BitbucketError
@@ -165,15 +165,50 @@ def test_resolve_task_retries_on_conflict() -> None:
     assert recorder.bodies()[2] == {"version": 7, "state": "RESOLVED"}
 
 
-def test_get_comment() -> None:
-    comment, recorder = _run(
-        lambda request: httpx.Response(200, json={"id": 5, "version": 3, "state": "RESOLVED"}),
-        lambda client: client.get_comment(make_pr(), 5),
-    )
-    assert (comment.id, comment.version, comment.state) == (5, 3, "RESOLVED")
-    request = recorder.requests[0]
-    assert request.method == "GET"
-    assert request.url.path.endswith("/pull-requests/1/comments/5")
+def test_list_tasks_paginates_open_blocker_comments() -> None:
+    author = {"name": "me", "slug": "me"}
+
+    def responder(request: httpx.Request) -> httpx.Response:
+        if request.url.params["start"] == "0":
+            first = {"id": 5, "version": 3, "author": author}
+            return httpx.Response(
+                200,
+                json={"values": [first], "isLastPage": False, "nextPageStart": 1},
+            )
+        second = {"id": 6, "version": 1, "state": "RESOLVED"}
+        return httpx.Response(200, json={"values": [second], "isLastPage": True})
+
+    tasks, recorder = _run(responder, lambda client: client.list_tasks(make_pr()))
+    assert [(task.id, task.version, task.is_open) for task in tasks] == [
+        (5, 3, True),
+        (6, 1, False),
+    ]
+    assert tasks[0].author.slug == "me"
+    first, second = recorder.requests
+    assert first.url.path.endswith("/pull-requests/1/blocker-comments")
+    assert first.url.params["state"] == "OPEN"
+    assert first.url.params["limit"] == "100"
+    assert second.url.params["start"] == "1"
+
+
+def test_list_tasks_error_on_any_page_fails() -> None:
+    def responder(request: httpx.Request) -> httpx.Response:
+        if request.url.params["start"] == "0":
+            return httpx.Response(
+                200,
+                json={"values": [{"id": 5}], "isLastPage": False, "nextPageStart": 1},
+            )
+        return httpx.Response(500, text="boom")
+
+    with pytest.raises(BitbucketError, match="HTTP 500"):
+        _run(responder, lambda client: client.list_tasks(make_pr()))
+
+
+def test_task_counts_from_properties() -> None:
+    assert make_pr().task_counts is None
+    assert with_counts(make_pr(), 2, 3).task_counts == (2, 3)
+    partial = make_pr().model_copy(update={"properties": {"openTaskCount": 1}})
+    assert partial.task_counts is None
 
 
 def test_update_comment_retries_on_conflict() -> None:

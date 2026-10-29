@@ -29,6 +29,7 @@ __all__ = [
 
 _SIMPLE_TIMEOUT_MINUTES = 3
 _AI_TIMEOUT_MINUTES = 20
+_RESOLVE_DELAY_MINUTES = 15
 _DEFAULT_PORT = 8765
 _SECONDS_IN_MINUTE = 60
 _MAX_PORT = 65535
@@ -150,6 +151,9 @@ class DaemonSettings(_Model):
     dry_run: bool = False
     # false — не ставить APPROVED, когда замечаний нет (NEEDS_WORK ставится как обычно).
     approve: bool = True
+    # Сколько минут PR без нового коммита после ручного закрытия всех тасок бота, прежде чем
+    # снять «Требуются изменения»: закрыл таски и сразу запушил — проверяется новый коммит.
+    resolve_delay_minutes: float = Field(default=_RESOLVE_DELAY_MINUTES, ge=0)
 
     @property
     def home(self) -> Path:
@@ -160,6 +164,11 @@ class DaemonSettings(_Model):
     def interval_seconds(self) -> float:
         """Период опроса Bitbucket в секундах."""
         return self.interval_minutes * _SECONDS_IN_MINUTE
+
+    @property
+    def resolve_delay_seconds(self) -> float:
+        """Тишина после ручного закрытия всех тасок бота в секундах."""
+        return self.resolve_delay_minutes * _SECONDS_IN_MINUTE
 
 
 class BitbucketSettings(_Model):

@@ -3,12 +3,20 @@
 from collections.abc import Sequence
 from types import MappingProxyType
 
-from gigareview.config import Scenario, ScenarioKind
+from gigareview.config import DaemonSettings, Scenario, ScenarioKind
 from gigareview.scenarios.runner import ScenarioReport
 from gigareview.scenarios.tasks import Task
-from gigareview.statuses import Outcome, RunStatus
+from gigareview.statuses import Outcome, ReviewStatus, RunStatus
 
-__all__ = ["crash_text", "overall_status", "summary_text", "task_text"]
+__all__ = [
+    "crash_text",
+    "guide_text",
+    "overall_status",
+    "settled_text",
+    "summary_table",
+    "summary_text",
+    "task_text",
+]
 
 #: Предел длины текста комментария (у Bitbucket ~32 тыс. символов).
 MAX_COMMENT_CHARS = 30_000
@@ -35,6 +43,12 @@ _STATUS_LABELS = MappingProxyType({
     RunStatus.FAILED: "⚠️ замечаний нет, но часть проверок не удалась — статус не изменён",
 })
 _PASSED_UNAPPROVED_LABEL = "✅ замечаний нет"
+_SETTLED_APPROVED_LABEL = "✅ замечания закрыты вручную — PR одобрен"
+_SETTLED_LABEL = "✅ замечания закрыты вручную — статус «Требуются изменения» снят"
+_SETTLED_FAILED_LABEL = (
+    "✅ замечания закрыты вручную, но часть проверок не удалась — статус «Требуются изменения» "
+    "снят, PR не одобрен"
+)
 
 
 def overall_status(reports: Sequence[ScenarioReport]) -> RunStatus:
@@ -60,43 +74,92 @@ def task_text(report: ScenarioReport, task: Task) -> str:
     return f"{header}\n\n```\n{body}\n```"
 
 
+def summary_table(
+    reports: Sequence[ScenarioReport],
+    *,
+    commit: str,
+    pending: Sequence[Scenario] = (),
+) -> str:
+    """Шапка и таблица сценариев статусного комментария (без итога)."""
+    rows = [_summary_row(report.scenario, _outcome_label(report)) for report in reports]
+    rows.extend(_summary_row(scenario, _PENDING_LABEL) for scenario in pending)
+    lines = [_header(commit), "", "| Сценарий | Результат |", "|---|---|", *rows]
+    return "\n".join(lines)
+
+
 def summary_text(
     reports: Sequence[ScenarioReport],
     *,
     commit: str,
     run_url: str,
     pending: Sequence[Scenario] = (),
-    approve: bool = True,
+    policy: DaemonSettings | None = None,
 ) -> str:
-    """Статусный комментарий: таблица сценариев, итог (или «идут проверки») и ссылка.
+    """Статусный комментарий: таблица сценариев, итог (или «идут проверки»), ссылка, памятка.
 
-    Без ``approve`` успешный итог не обещает одобрения PR: статус APPROVED не ставится.
+    ``policy`` — настройки демона, с которыми идёт прогон: без ``approve`` успешный итог не
+    обещает одобрения PR, от ``resolve_delay_minutes`` зависит памятка.
     """
-    rows = [_summary_row(report.scenario, _outcome_label(report)) for report in reports]
-    rows.extend(_summary_row(scenario, _PENDING_LABEL) for scenario in pending)
+    settings = policy or DaemonSettings()
     if pending and reports:
         status_label = _PARTIAL_LABEL
     elif pending:
         status_label = _STARTED_LABEL
-    elif not approve and overall_status(reports) is RunStatus.PASSED:
+    elif not settings.approve and overall_status(reports) is RunStatus.PASSED:
         status_label = _PASSED_UNAPPROVED_LABEL
     else:
         status_label = _STATUS_LABELS[overall_status(reports)]
-    lines = [
-        _header(commit),
-        "",
-        "| Сценарий | Результат |",
-        "|---|---|",
-        *rows,
-        "",
-        f"Итог: {status_label}",
-    ]
-    return _with_link(lines, run_url)
+    table = summary_table(reports, commit=commit, pending=pending)
+    return _finish(table, status_label, run_url, settings)
 
 
-def crash_text(*, commit: str, run_url: str) -> str:
+def settled_text(
+    table: str,
+    status: ReviewStatus,
+    *,
+    run_url: str,
+    policy: DaemonSettings,
+) -> str:
+    """Статусный комментарий после ручного закрытия тасок (или их открытия заново).
+
+    ``status`` — что поставлено: APPROVED, UNAPPROVED (без ``approve`` или при упавших
+    проверках) или NEEDS_WORK (таску открыли заново).
+    """
+    if status is ReviewStatus.APPROVED:
+        status_label = _SETTLED_APPROVED_LABEL
+    elif status is ReviewStatus.NEEDS_WORK:
+        status_label = _STATUS_LABELS[RunStatus.ISSUES]
+    elif policy.approve:
+        status_label = _SETTLED_FAILED_LABEL
+    else:
+        status_label = _SETTLED_LABEL
+    return _finish(table, status_label, run_url, policy)
+
+
+def crash_text(*, commit: str, run_url: str, policy: DaemonSettings | None = None) -> str:
     """Статусный комментарий прогона, который упал (git, init, Bitbucket)."""
-    return _with_link([_header(commit), "", f"Итог: {_CRASH_LABEL}"], run_url)
+    return _finish(_header(commit), _CRASH_LABEL, run_url, policy or DaemonSettings())
+
+
+def guide_text(policy: DaemonSettings) -> str:
+    """Памятка в статусном комментарии: как работать с ботом."""
+    minutes = format(policy.resolve_delay_minutes, "g")
+    quiet = f" и {minutes} мин нет новых коммитов" if policy.resolve_delay_minutes else ""
+    approval = " и одобрит PR, если все проверки прошли" if policy.approve else ""
+    fixed = (
+        "- Каждое замечание — таска. Исправили — просто запушьте: новый коммит проверяется "
+        "заново, исправленные таски бот закроет сам."
+    )
+    false_positive = (
+        f"- Ложное срабатывание — закройте таску. Когда все таски бота закрыты{quiet}, бот "
+        f"снимет «Требуются изменения»{approval}. ИИ-ревью закрытые замечания больше не "
+        "поднимает."
+    )
+    reopened = (
+        "- Открытая заново таска снова блокирует PR. Новый коммит снимает одобрение бота до "
+        "конца проверки."
+    )
+    return f"---\n**Как работать со мной**\n{fixed}\n{false_positive}\n{reopened}"
 
 
 def _header(commit: str) -> str:
@@ -105,11 +168,14 @@ def _header(commit: str) -> str:
     return f"**gigareview** — проверка коммита `{short_commit}`"
 
 
-def _with_link(lines: list[str], run_url: str) -> str:
-    """Строки комментария и ссылка на прогон в Web Dashboard."""
+def _finish(table: str, status_label: str, run_url: str, policy: DaemonSettings) -> str:
+    """Таблица, итог, ссылка на прогон в Web Dashboard и памятка."""
+    parts = [table] if table else []
+    parts.append(f"Итог: {status_label}")
     if run_url:
-        lines.append(f"\n[Подробности прогона]({run_url})")
-    return "\n".join(lines)
+        parts.append(f"[Подробности прогона]({run_url})")
+    parts.append(guide_text(policy))
+    return "\n\n".join(parts)
 
 
 def _summary_row(scenario: Scenario, label: str) -> str:

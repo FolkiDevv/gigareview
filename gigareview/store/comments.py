@@ -42,9 +42,12 @@ class CommentRepository:
         ).fetchone()
         return None if row is None else _record(row)
 
-    def set_version(self, record_id: int, version: int) -> None:
-        """Комментарий изменён: новая версия в Bitbucket."""
-        self._db.execute("UPDATE bb_comments SET version = ? WHERE id = ?", (version, record_id))
+    def update(self, record_id: int, version: int, text: str) -> None:
+        """Комментарий изменён: новая версия в Bitbucket и сохранённый текст."""
+        self._db.execute(
+            "UPDATE bb_comments SET version = ?, text = ? WHERE id = ?",
+            (version, text, record_id),
+        )
 
     def open_tasks(
         self,
@@ -73,13 +76,33 @@ class CommentRepository:
         )
         return [_record(row) for row in rows]
 
+    def dismissed_tasks(
+        self,
+        project: str,
+        repo: str,
+        pr_id: int,
+        scenario: str,
+    ) -> list[CommentRecord]:
+        """Таски сценария ``scenario``, которые закрыл или удалил человек, а не демон."""
+        return [record for record in self.tasks(project, repo, pr_id, scenario) if record.dismissed]
+
     def mark_resolved(self, record_id: int) -> None:
-        """Таска закрыта в Bitbucket."""
+        """Таску закрыл демон."""
         self._db.execute("UPDATE bb_comments SET resolved = 1 WHERE id = ?", (record_id,))
+
+    def mark_dismissed(self, record_id: int) -> None:
+        """Таску закрыл или удалил в Bitbucket человек: для демона это ложное срабатывание."""
+        self._db.execute(
+            "UPDATE bb_comments SET resolved = 1, dismissed = 1 WHERE id = ?",
+            (record_id,),
+        )
 
     def mark_open(self, record_id: int) -> None:
         """Закрытую таску снова открыли в Bitbucket."""
-        self._db.execute("UPDATE bb_comments SET resolved = 0 WHERE id = ?", (record_id,))
+        self._db.execute(
+            "UPDATE bb_comments SET resolved = 0, dismissed = 0 WHERE id = ?",
+            (record_id,),
+        )
 
     def for_run(self, run_id: int) -> list[CommentRecord]:
         """Комментарии, опубликованные прогоном."""
@@ -101,4 +124,5 @@ def _record(row: sqlite3.Row) -> CommentRecord:
         scenario=row["scenario"],
         resolved=bool(row["resolved"]),
         details=TaskDetails(row["text"], row["path"], row["line"]),
+        dismissed=bool(row["dismissed"]),
     )

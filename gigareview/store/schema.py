@@ -94,5 +94,24 @@ _PARTIAL = """
 ALTER TABLE scenario_results ADD COLUMN partial INTEGER NOT NULL DEFAULT 0;
 """
 
+# dismissed — таску закрыл или удалил человек (ложное срабатывание), а не сам демон: ИИ-ревью
+# не поднимает её снова. task_watch — наблюдение за PR без нового коммита: когда все таски
+# демона закрыты вручную, через тишину снимается «Требуются изменения».
+_WATCH = """
+ALTER TABLE bb_comments ADD COLUMN dismissed INTEGER NOT NULL DEFAULT 0;
+CREATE TABLE task_watch (
+    project TEXT NOT NULL,
+    repo TEXT NOT NULL,
+    pr_id INTEGER NOT NULL,
+    run_id INTEGER NOT NULL REFERENCES runs (id) ON DELETE CASCADE,
+    task_counts TEXT NOT NULL DEFAULT '',
+    checked_at TEXT,
+    retry_after TEXT,
+    clear_since TEXT,
+    settled_status TEXT NOT NULL DEFAULT '',
+    PRIMARY KEY (project, repo, pr_id)
+);
+"""
+
 #: Миграции по порядку: i-я переводит базу с версии i на i + 1.
-MIGRATIONS: tuple[str, ...] = (_INITIAL, _REVIEW_STATE, _PARTIAL)
+MIGRATIONS: tuple[str, ...] = (_INITIAL, _REVIEW_STATE, _PARTIAL, _WATCH)

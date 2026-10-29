@@ -228,3 +228,11 @@ def test_sample_has_incremental_ai_review() -> None:
     assert review.kind is ScenarioKind.AI
     assert review.incremental
     assert "gigacrew --mode plan" in review.run
+
+
+def test_resolve_delay_setting() -> None:
+    assert _config().daemon.resolve_delay_minutes == 15
+    assert _config(daemon={"resolve_delay_minutes": 0}).daemon.resolve_delay_seconds == 0
+    assert _config(daemon={"resolve_delay_minutes": 1.5}).daemon.resolve_delay_seconds == 90
+    with pytest.raises(ValueError, match="greater than or equal"):
+        _config(daemon={"resolve_delay_minutes": -1})
