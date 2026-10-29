@@ -17,6 +17,8 @@ __all__ = ["ScenarioContext", "ScenarioReport", "run_scenario"]
 _OUTCOMES = MappingProxyType({0: Outcome.PASSED, 1: Outcome.ISSUES})
 
 _EMPTY_OUTPUT = "(сценарий не вывел подробностей)"
+#: Прерванное ревью без замечаний не повод одобрять PR.
+_INTERRUPTED = "ревью прервано и проверило не все изменения"
 
 
 @dataclass(frozen=True, slots=True)
@@ -99,8 +101,23 @@ class _Runner:
                 f"валидация вернула код {code}: сценарий отработал некорректно",
             )
         if outcome is Outcome.PASSED and not self._scenario.incremental:
+            if self._interrupted(steps.run.output):
+                return self._failed(steps, _INTERRUPTED)
             return self._report(steps, Outcome.PASSED)
         return await self._document(steps, outcome)
+
+    def _interrupted(self, text: str) -> bool:
+        """ИИ-сценарий без замечаний сам сообщил, что ревью прервано (``"partial": true``).
+
+        Вывод, который не разбирается как итог, — обычный «пройден»: ``format`` без замечаний
+        не выполняется, а вывод ``run`` может быть любым.
+        """
+        if self._scenario.kind is not ScenarioKind.AI:
+            return False
+        try:
+            return parse_review(text).partial
+        except ValueError:
+            return False
 
     async def _document(self, steps: _Steps, outcome: Outcome) -> ScenarioReport:
         """Итог: вывод форматирования или основных команд → таски и закрытые прошлые таски.
@@ -123,7 +140,7 @@ class _Runner:
             return self._failed(steps, f"не удалось разобрать таски: {error}")
         if outcome is Outcome.PASSED and document.partial:
             # Прерванное ревью без замечаний не повод одобрять PR.
-            return self._failed(steps, "ревью прервано и проверило не все изменения")
+            return self._failed(steps, _INTERRUPTED)
         if outcome is Outcome.PASSED:
             # Без замечаний таски не публикуются: из итога берутся только закрытые.
             return self._report(steps, Outcome.PASSED, replace(document, tasks=()))

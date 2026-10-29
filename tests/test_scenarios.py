@@ -273,11 +273,18 @@ def test_partial_document_reaches_report(tmp_path: Path) -> None:
     assert report.partial
 
 
-def test_partial_review_without_issues_is_error(tmp_path: Path) -> None:
+@pytest.mark.parametrize("options", [{"incremental": True}, {}])
+def test_partial_review_without_issues_is_error(tmp_path: Path, options: dict[str, Any]) -> None:
     document = '{"tasks": [], "partial": true}'
-    report = _run(tmp_path, kind="ai", incremental=True, run=f"echo '{document}'")
+    report = _run(tmp_path, kind="ai", run=f"echo '{document}'", **options)
     assert report.outcome is Outcome.ERROR
     assert "прервано" in report.error
+
+
+@pytest.mark.parametrize("output", ["всё хорошо", '{"tasks": [], "partial": "да"}'])
+def test_ai_pass_with_other_output_still_passes(tmp_path: Path, output: str) -> None:
+    report = _run(tmp_path, kind="ai", run=f"echo '{output}'")
+    assert report.outcome is Outcome.PASSED
 
 
 def test_summary_text_incremental_counts() -> None:
