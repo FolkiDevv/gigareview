@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any, override
 
 import pytest
-from fakes import FakeBitbucket, Origin, git, make_config, make_pr, with_status
+from fakes import FakeBitbucket, Origin, git, make_config, make_pr, with_counts, with_status
 
 from gigareview.bitbucket import PullRequest
 from gigareview.config import SAMPLE_CONFIG
@@ -610,9 +610,28 @@ def _review_pr(
     return run
 
 
-def test_first_run_does_not_list_tasks(tmp_path: Path, store: Store, origin: Origin) -> None:
-    _, api = _review(tmp_path, store, origin, scenarios=_incremental("echo '[]'"))
+def test_first_run_without_open_tasks_does_not_list_them(
+    tmp_path: Path,
+    store: Store,
+    origin: Origin,
+) -> None:
+    api = FakeBitbucket(prs=[with_counts(make_pr(commit=origin.feature), 0, 0)])
+    _review_pr(tmp_path, store, origin, api, scenarios=_incremental("echo '[]'"))
     assert "list_tasks" not in api.calls
+    assert api.statuses == [(1, ReviewStatus.APPROVED)]
+
+
+def test_manual_task_of_user_blocks_approval(
+    tmp_path: Path,
+    store: Store,
+    origin: Origin,
+) -> None:
+    api = FakeBitbucket(prs=[make_pr(commit=origin.feature)])
+    api.add_task(1, "своё замечание")
+    run = _review_pr(tmp_path, store, origin, api)
+    assert run.status is RunStatus.PASSED
+    assert api.statuses == []
+    assert "PR одобрен" not in api.summaries[-1].text
 
 
 def test_one_task_listing_per_phase_for_many_old_tasks(

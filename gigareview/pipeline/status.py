@@ -70,14 +70,23 @@ class StatusBoard:
         pr: PullRequest,
         reports: Sequence[ScenarioReport],
         pending: Sequence[Scenario] = (),
+        *,
+        approve: bool = True,
     ) -> None:
-        """Итоги сценариев ``reports``; ``pending`` — ещё не выполненные сценарии."""
+        """Итоги сценариев ``reports``; ``pending`` — ещё не выполненные сценарии.
+
+        ``approve=False`` — PR в этом прогоне не одобряется (открыта ручная таска
+        пользователя демона), даже если настройки это разрешают.
+        """
+        policy = self._policy
+        if not approve:
+            policy = policy.model_copy(update={"approve": False})
         text = summary_text(
             reports,
             commit=pr.commit,
             run_url=self._run_url,
             pending=pending,
-            policy=self._policy,
+            policy=policy,
         )
         await self._write(pr, text, summary_table(reports, commit=pr.commit, pending=pending))
 

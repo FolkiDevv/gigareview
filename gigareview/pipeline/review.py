@@ -223,25 +223,32 @@ class Reviewer:
                 note = f"{note}, оставшиеся сценарии не запускались"
             self._event(EventLevel.WARNING, f"{_pr_label(pr)}: {note}", run.id)
             return note
-        # Снимок тасок — до публикации: новые таски этапа в него не входят.
-        progress.states = await fetch_task_states(
-            self._api,
-            self._store,
-            fresh,
-            counts=fresh.task_counts,
-        )
-        publisher = Publisher(self._api, self._store, run.id, progress.states)
+        states = await self._snapshot(progress, fresh)
+        # Открытая ручная таска пользователя демона — его замечание: PR не одобряется.
+        approve = progress.policy.approve and not states.manual
+        publisher = Publisher(self._api, self._store, run.id, states)
         await publisher.publish_tasks(fresh, phase_reports)
-        await progress.board.show(fresh, progress.reports, pending)
+        await progress.board.show(fresh, progress.reports, pending, approve=approve)
         if not pending:
             await publisher.finish(
                 fresh,
                 progress.reports,
                 overall_status(progress.reports),
-                approve=progress.policy.approve,
+                approve=approve,
             )
             self._store.runs.mark_published(run.id)
         return ""
+
+    async def _snapshot(self, progress: "_Progress", fresh: PullRequest) -> TaskStates:
+        """Снимок тасок перед публикацией этапа (новые таски этапа в него не входят)."""
+        progress.states = await fetch_task_states(
+            self._api,
+            self._store,
+            fresh,
+            counts=fresh.task_counts,
+            slug=await self._api.current_slug(),
+        )
+        return progress.states
 
     async def _withdraw(self, pr: PullRequest, run_id: int) -> None:
         """Новый коммит снимает одобрение PR до конца его проверки."""
