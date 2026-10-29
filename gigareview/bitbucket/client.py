@@ -74,12 +74,24 @@ class BitbucketClient:
         return self._slug
 
     async def list_review_prs(self) -> list[PullRequest]:
-        """Открытые PR со всего сервера, где текущий пользователь — ревьюер."""
-        pages = await self._paged(
-            f"{_API}/dashboard/pull-requests",
-            {"role": "REVIEWER", "state": "OPEN"},
-        )
-        return [PullRequest.model_validate(raw) for raw in pages]
+        """Открытые PR со всего сервера, где текущий пользователь — ревьюер (все страницы)."""
+        prs: list[PullRequest] = []
+        start = 0
+        while True:
+            page = await self._json(
+                "GET",
+                f"{_API}/dashboard/pull-requests",
+                params={
+                    "role": "REVIEWER",
+                    "state": "OPEN",
+                    "limit": str(_PAGE_LIMIT),
+                    "start": str(start),
+                },
+            )
+            prs.extend(PullRequest.model_validate(raw) for raw in page.get("values", []))
+            if page.get("isLastPage", True):
+                return prs
+            start = int(page["nextPageStart"])
 
     async def get_pull_request(self, project: str, repo: str, pr_id: int) -> PullRequest:
         """PR по номеру."""
@@ -110,6 +122,11 @@ class BitbucketClient:
                 raise
             body["text"] = f"`{_location(anchor)}`\n\n{text}"
             raw = await self._json("POST", path, json=body)
+        return Comment.model_validate(raw)
+
+    async def get_comment(self, pr: PullRequest, comment_id: int) -> Comment:
+        """Комментарий PR по номеру."""
+        raw = await self._json("GET", _comment_path(pr, comment_id))
         return Comment.model_validate(raw)
 
     async def resolve_task(self, pr: PullRequest, comment_id: int, version: int) -> Comment:
@@ -147,30 +164,15 @@ class BitbucketClient:
         changes: dict[str, Any],
     ) -> Comment:
         """Изменение комментария; при HTTP 409 (версия устарела) — с версией из Bitbucket."""
-        path = f"{_pr_path(pr.project, pr.repo, pr.id)}/comments/{comment_id}"
+        path = _comment_path(pr, comment_id)
         try:
             raw = await self._json("PUT", path, json={"version": version, **changes})
         except BitbucketError as error:
             if error.status_code != HTTPStatus.CONFLICT:
                 raise
-            fresh = Comment.model_validate(await self._json("GET", path))
+            fresh = await self.get_comment(pr, comment_id)
             raw = await self._json("PUT", path, json={"version": fresh.version, **changes})
         return Comment.model_validate(raw)
-
-    async def _paged(self, path: str, query: dict[str, str]) -> list[dict[str, Any]]:
-        """Все страницы списка ``path`` (``values`` подряд)."""
-        collected: list[dict[str, Any]] = []
-        start = 0
-        while True:
-            page = await self._json(
-                "GET",
-                path,
-                params={**query, "limit": str(_PAGE_LIMIT), "start": str(start)},
-            )
-            collected.extend(page.get("values", []))
-            if page.get("isLastPage", True):
-                return collected
-            start = int(page["nextPageStart"])
 
     async def _json(self, method: str, path: str, **kwargs: Any) -> dict[str, Any]:
         """Запрос с JSON-ответом (пустой ответ — пустой словарь)."""
@@ -203,6 +205,11 @@ class BitbucketClient:
 def _pr_path(project: str, repo: str, pr_id: int) -> str:
     """Путь API к PR."""
     return f"{_API}/projects/{project}/repos/{repo}/pull-requests/{pr_id}"
+
+
+def _comment_path(pr: PullRequest, comment_id: int) -> str:
+    """Путь API к комментарию PR."""
+    return f"{_pr_path(pr.project, pr.repo, pr.id)}/comments/{comment_id}"
 
 
 def _anchor(anchor: Anchor) -> dict[str, Any]:

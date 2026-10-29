@@ -165,11 +165,14 @@ def test_comments(store: Store) -> None:
     assert [task.comment_id for task in tasks] == [10]
     store.comments.mark_resolved(tasks[0].id)
     assert store.comments.open_tasks("PROJ", "repo", 1) == []
+    assert [task.resolved for task in store.comments.tasks("PROJ", "repo", 1)] == [True]
     published = store.comments.for_run(run_id)
     assert [(comment.kind, comment.resolved) for comment in published] == [
         (CommentKind.TASK, True),
         (CommentKind.SUMMARY, False),
     ]
+    store.comments.mark_open(tasks[0].id)
+    assert len(store.comments.open_tasks("PROJ", "repo", 1)) == 1
 
 
 def test_events(store: Store) -> None:

@@ -1,10 +1,12 @@
 """Инкрементальное ревью: коммит прошлого ревью сценария, его открытые таски и их судьба."""
 
 from dataclasses import dataclass, replace
+from http import HTTPStatus
 from pathlib import Path
 
-from gigareview.bitbucket import PullRequest
+from gigareview.bitbucket import BitbucketApi, PullRequest
 from gigareview.config import Scenario
+from gigareview.errors import BitbucketError
 from gigareview.gitops import GitRepo
 from gigareview.scenarios import OpenTask, ScenarioReport, open_tasks_json
 from gigareview.statuses import Outcome
@@ -22,12 +24,17 @@ class History:
 
 
 async def scenario_history(
+    api: BitbucketApi,
     store: Store,
     pr: PullRequest,
     scenario: Scenario,
     repo_dir: Path,
 ) -> History:
-    """История сценария в PR; коммит не предок текущего (force-push) — ревью с нуля."""
+    """История сценария в PR; коммит не предок текущего (force-push) — ревью с нуля.
+
+    Таски сверяются с Bitbucket: закрытые или удалённые вручную в историю не входят. У
+    инкрементального сценария сверяются и закрытые: открытая заново таска снова в истории.
+    """
     previous = store.runs.last_reviewed_commit(
         pr.project,
         pr.repo,
@@ -37,7 +44,18 @@ async def scenario_history(
     )
     if previous and not await GitRepo(repo_dir, "").is_ancestor(previous, pr.commit):
         previous = None
-    tasks = store.comments.open_tasks(pr.project, pr.repo, pr.id, scenario.name)
+    records = (store.comments.tasks if scenario.incremental else store.comments.open_tasks)(
+        pr.project,
+        pr.repo,
+        pr.id,
+        scenario.name,
+    )
+    tasks = [
+        record
+        for record in records
+        # Немного запросов, а ответ каждого нужно разобрать отдельно.
+        if await _still_open(api, store, pr, record)  # noqa: WPS476
+    ]
     return History(previous or "", tuple(tasks))
 
 
@@ -66,6 +84,32 @@ def settle(report: ScenarioReport, history: History) -> ScenarioReport:
     if outcome is Outcome.PASSED and kept:
         outcome = Outcome.ISSUES
     return replace(report, outcome=outcome, resolved=resolved, kept=kept)
+
+
+async def _still_open(
+    api: BitbucketApi,
+    store: Store,
+    pr: PullRequest,
+    record: CommentRecord,
+) -> bool:
+    """Таска открыта в Bitbucket; база принимает её состояние оттуда.
+
+    Пользователь закрывает таски, с которыми не согласен: их нельзя держать за замечания.
+    Открытая им заново таска — снова замечание. Удалённая таска закрыта навсегда.
+    """
+    try:
+        comment = await api.get_comment(pr, record.comment_id)
+    except BitbucketError as error:
+        if error.status_code != HTTPStatus.NOT_FOUND:
+            raise
+        is_open = False
+    else:
+        is_open = comment.state != "RESOLVED"
+    if is_open and record.resolved:
+        store.comments.mark_open(record.id)
+    elif not is_open and not record.resolved:
+        store.comments.mark_resolved(record.id)
+    return is_open
 
 
 def _open_task(record: CommentRecord) -> OpenTask:

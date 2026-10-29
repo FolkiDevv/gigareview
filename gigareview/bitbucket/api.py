@@ -34,6 +34,10 @@ class BitbucketApi(Protocol):
         """Комментарий к PR; ``task`` — таска (BLOCKER), ``anchor`` — к строке файла."""
         ...
 
+    async def get_comment(self, pr: PullRequest, comment_id: int) -> Comment:
+        """Комментарий PR по номеру (таска — с её состоянием)."""
+        ...
+
     async def resolve_task(self, pr: PullRequest, comment_id: int, version: int) -> Comment:
         """Помечает таску выполненной (``RESOLVED``)."""
         ...

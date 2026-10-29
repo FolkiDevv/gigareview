@@ -165,6 +165,17 @@ def test_resolve_task_retries_on_conflict() -> None:
     assert recorder.bodies()[2] == {"version": 7, "state": "RESOLVED"}
 
 
+def test_get_comment() -> None:
+    comment, recorder = _run(
+        lambda request: httpx.Response(200, json={"id": 5, "version": 3, "state": "RESOLVED"}),
+        lambda client: client.get_comment(make_pr(), 5),
+    )
+    assert (comment.id, comment.version, comment.state) == (5, 3, "RESOLVED")
+    request = recorder.requests[0]
+    assert request.method == "GET"
+    assert request.url.path.endswith("/pull-requests/1/comments/5")
+
+
 def test_update_comment_retries_on_conflict() -> None:
     def responder(request: httpx.Request) -> httpx.Response:
         if request.method == "GET":

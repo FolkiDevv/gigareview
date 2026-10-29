@@ -71,11 +71,14 @@ class FakeBitbucket:
     prs: list[PullRequest] = field(default_factory=list)
     comments: list[PostedComment] = field(default_factory=list)
     resolved: list[int] = field(default_factory=list)
+    states: dict[int, str] = field(default_factory=dict)
+    deleted: set[int] = field(default_factory=set)
     statuses: list[tuple[int, ReviewStatus]] = field(default_factory=list)
     slug_error: BitbucketError | None = None
     list_error: Exception | None = None
     get_error: Exception | None = None
     resolve_error: BitbucketError | None = None
+    comment_error: BitbucketError | None = None
     update_error: BitbucketError | None = None
     edits: list[int] = field(default_factory=list)
     status_texts: list[str] = field(default_factory=list)
@@ -128,10 +131,22 @@ class FakeBitbucket:
             self.status_texts.append(text)
         return Comment(id=comment_id, version=0, text=text)
 
+    async def get_comment(self, pr: PullRequest, comment_id: int) -> Comment:
+        if self.comment_error is not None:
+            raise self.comment_error
+        if comment_id in self.deleted:
+            raise BitbucketError("not found", status_code=404)
+        for comment in self.comments:
+            if comment.id == comment_id:
+                state = self.states.get(comment_id, "OPEN")
+                return Comment(id=comment_id, text=comment.text, state=state)
+        raise BitbucketError("not found", status_code=404)
+
     async def resolve_task(self, pr: PullRequest, comment_id: int, version: int) -> Comment:
         if self.resolve_error is not None:
             raise self.resolve_error
         self.resolved.append(comment_id)
+        self.states[comment_id] = "RESOLVED"
         return Comment(id=comment_id, version=version + 1, state="RESOLVED")
 
     async def update_comment(
