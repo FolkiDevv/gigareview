@@ -234,7 +234,8 @@ def _task_text(finding: Finding, note: str) -> str:
     """Текст таски: серьёзность и заголовок, участок, суть и как исправить."""
     label = _LABELS[finding.severity]
     header = f"**{label}: {finding.title}**" if finding.title else f"**{label}**"
-    parts = [header]
+    # Пометка — сразу после заголовка: длинный текст таски обрезается с конца.
+    parts = [header, note] if note else [header]
     if (
         finding.line is not None
         and finding.end_line is not None
@@ -245,8 +246,6 @@ def _task_text(finding: Finding, note: str) -> str:
         parts.append(finding.body)
     if finding.suggestion:
         parts.append(f"**Как исправить:** {finding.suggestion}")
-    if note:
-        parts.append(note)
     return "\n\n".join(parts)
 
 

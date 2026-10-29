@@ -8,6 +8,7 @@ from pydantic import (
     BaseModel,
     ConfigDict,
     Field,
+    StrictBool,
     StringConstraints,
     TypeAdapter,
     ValidationError,
@@ -50,6 +51,7 @@ class _TaskModel(BaseModel):
 
 _TASKS = TypeAdapter(list[_TaskModel])
 _RESOLVED = TypeAdapter(list[int])
+_PARTIAL = TypeAdapter(StrictBool)
 
 
 def parse_tasks(text: str) -> tuple[Task, ...]:
@@ -69,14 +71,16 @@ def parse_review(text: str) -> ReviewDocument:
     except json.JSONDecodeError as error:
         raise ValueError(f"вывод — не JSON: {error}") from error
     resolved: object = []
-    partial = False
+    partial_raw: object = False
     if isinstance(parsed, dict):
         resolved = parsed.get("resolved") or []
-        partial = parsed.get("partial") is True
+        partial_raw = parsed.get("partial", False)
         parsed = parsed.get("tasks", [])
     try:
         models = _TASKS.validate_python(parsed)
         resolved_ids = _RESOLVED.validate_python(resolved)
+        # Строгое true/false: ошибочное «не прервано» сдвинуло бы точку отсчёта ревью.
+        partial = _PARTIAL.validate_python(partial_raw)
     except ValidationError as error:
         raise ValueError(f"неверный список тасок: {error}") from error
     tasks = tuple(Task(model.text, model.path or None, model.line) for model in models)

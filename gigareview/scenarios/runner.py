@@ -121,6 +121,9 @@ class _Runner:
             document = self._parse(text)
         except ValueError as error:
             return self._failed(steps, f"не удалось разобрать таски: {error}")
+        if outcome is Outcome.PASSED and document.partial:
+            # Прерванное ревью без замечаний не повод одобрять PR.
+            return self._failed(steps, "ревью прервано и проверило не все изменения")
         if outcome is Outcome.PASSED:
             # Без замечаний таски не публикуются: из итога берутся только закрытые.
             return self._report(steps, Outcome.PASSED, replace(document, tasks=()))

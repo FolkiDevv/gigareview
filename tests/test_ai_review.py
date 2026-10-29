@@ -331,7 +331,7 @@ def test_cli_format_anchors_tasks(
     monkeypatch.setenv("GR_RUN_EXIT", "3")
     assert _main(monkeypatch, ["tasks"], answer) == 0
     stopped = json.loads(capsys.readouterr().out)
-    assert stopped["tasks"][0]["text"].endswith("проверены не все изменения._")
+    assert stopped["tasks"][0]["text"].startswith("**🟠 Ошибка: t**\n\n_Ревью прервано")
     assert stopped["partial"] is True
     assert parse_review(json.dumps(stopped)).partial
     assert rendered["partial"] is False
