@@ -51,6 +51,8 @@ class _TaskModel(BaseModel):
 
 _TASKS = TypeAdapter(list[_TaskModel])
 _RESOLVED = TypeAdapter(list[int])
+#: Поля, по которым объект в выводе считается итогом ИИ-сценария.
+_DOCUMENT_KEYS = frozenset(("tasks", "resolved", "partial"))
 _PARTIAL = TypeAdapter(StrictBool)
 
 
@@ -62,14 +64,18 @@ def parse_tasks(text: str) -> tuple[Task, ...]:
 def parse_review(text: str) -> ReviewDocument:
     """Разбирает ``[{"text", "path", "line"}]`` или ``{"tasks", "resolved", "partial"}``.
 
-    Модели любят оборачивать JSON в пояснения и ```-блоки: берётся фрагмент от первой
-    ``[`` или ``{`` до последней парной скобки. Неразборчивый вывод — :class:`ValueError`.
+    Итог — последний объект вывода с ``tasks``, ``resolved`` или ``partial``: строки лога
+    со скобками (``[INFO] …``, ``[]``) до и после него не мешают. Нет такого объекта —
+    голый список тасок: фрагмент от первой ``[`` или ``{`` до последней парной скобки
+    (модели любят оборачивать JSON в пояснения и ```-блоки). Неразборчивый вывод —
+    :class:`ValueError`.
     """
-    fragment = _json_fragment(text)
-    try:
-        parsed = json.loads(fragment)
-    except json.JSONDecodeError as error:
-        raise ValueError(f"вывод — не JSON: {error}") from error
+    parsed: object = _last_document(text)
+    if parsed is None:
+        try:
+            parsed = json.loads(_json_fragment(text))
+        except json.JSONDecodeError as error:
+            raise ValueError(f"вывод — не JSON: {error}") from error
     resolved: object = []
     partial_raw: object = False
     if isinstance(parsed, dict):
@@ -85,6 +91,29 @@ def parse_review(text: str) -> ReviewDocument:
         raise ValueError(f"неверный список тасок: {error}") from error
     tasks = tuple(Task(model.text, model.path or None, model.line) for model in models)
     return ReviewDocument(tasks, tuple(dict.fromkeys(resolved_ids)), partial=partial)
+
+
+def _last_document(text: str) -> dict[str, object] | None:
+    """Последний объект-итог в тексте (с ``tasks``, ``resolved`` или ``partial``).
+
+    Списки и прочие значения не берутся: строка лога ``[42]`` или вложенный список из
+    обрезанного итога не должны подменить сам итог. Вложенные в найденный объект значения
+    не просматриваются.
+    """
+    decoder = json.JSONDecoder()
+    found: dict[str, object] | None = None
+    index = 0
+    while True:
+        start = text.find("{", index)
+        if start < 0:
+            return found
+        try:
+            parsed, index = decoder.raw_decode(text, start)
+        except json.JSONDecodeError:
+            index = start + 1
+            continue
+        if isinstance(parsed, dict) and _DOCUMENT_KEYS & parsed.keys():
+            found = parsed
 
 
 def _json_fragment(text: str) -> str:

@@ -273,11 +273,50 @@ def test_partial_document_reaches_report(tmp_path: Path) -> None:
     assert report.partial
 
 
-def test_partial_review_without_issues_is_error(tmp_path: Path) -> None:
+@pytest.mark.parametrize("options", [{"incremental": True}, {}])
+def test_partial_review_without_issues_is_error(tmp_path: Path, options: dict[str, Any]) -> None:
     document = '{"tasks": [], "partial": true}'
-    report = _run(tmp_path, kind="ai", incremental=True, run=f"echo '{document}'")
+    report = _run(tmp_path, kind="ai", run=f"echo '{document}'", **options)
     assert report.outcome is Outcome.ERROR
     assert "прервано" in report.error
+
+
+def test_parse_review_skips_bracketed_log_lines() -> None:
+    text = '[INFO] start\n[1-40] read\n{"tasks": [{"text": "a"}], "partial": true}\n[done]'
+    document = parse_review(text)
+    assert document.tasks == (Task("a"),)
+    assert document.partial
+    with pytest.raises(ValueError, match="JSON"):
+        parse_review("[INFO] start [x]")
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        '[INFO] {"tasks": [], "partial": true}\n[42]',
+        '[INFO] {"tasks": [], "partial": true}\n{"level": "info"}',
+        '[] start\n{"partial": true}',
+    ],
+)
+def test_log_fragments_after_document_do_not_replace_it(text: str) -> None:
+    assert parse_review(text).partial
+
+
+def test_truncated_document_is_not_replaced_by_nested_value() -> None:
+    with pytest.raises(ValueError, match="JSON"):
+        parse_review('[INFO] {"tasks": [{"text": "a"}], "partial": ')
+
+
+def test_partial_after_log_lines_is_error(tmp_path: Path) -> None:
+    document = '{"tasks": [], "partial": true}'
+    report = _run(tmp_path, kind="ai", run=f"echo '[INFO] start'; echo '{document}'")
+    assert report.outcome is Outcome.ERROR
+
+
+@pytest.mark.parametrize("output", ["всё хорошо", '{"tasks": [], "partial": "да"}'])
+def test_ai_pass_with_other_output_still_passes(tmp_path: Path, output: str) -> None:
+    report = _run(tmp_path, kind="ai", run=f"echo '{output}'")
+    assert report.outcome is Outcome.PASSED
 
 
 def test_summary_text_incremental_counts() -> None:
