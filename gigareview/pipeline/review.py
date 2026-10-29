@@ -169,7 +169,13 @@ class Reviewer:
         context: ScenarioContext,
     ) -> ScenarioReport:
         """Сценарий с историей его прошлых ревью PR (коммит, открытые таски)."""
-        history = await scenario_history(self._store, pr, scenario, context.repo_dir)
+        history = await scenario_history(
+            self._api,
+            self._store,
+            pr,
+            scenario,
+            context.repo_dir,
+        )
         env = {**context.env, **history_env(history, context.artifacts, scenario)}
         report = await run_scenario(scenario, replace(context, env=env))
         return settle(report, history)

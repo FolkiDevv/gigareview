@@ -358,6 +358,51 @@ def test_incremental_scenario_keeps_tasks_until_resolved(
     assert api.statuses[-1] == (1, ReviewStatus.APPROVED)
 
 
+def test_tasks_closed_by_user_do_not_need_work(
+    tmp_path: Path,
+    store: Store,
+    origin: Origin,
+) -> None:
+    first = '{"tasks": [{"text": "one"}, {"text": "two"}, {"text": "three"}]}'
+    _, api = _review(tmp_path, store, origin, scenarios=_incremental(f"echo '{first}'; exit 1"))
+    one, two, three = (task.id for task in api.tasks)
+    api.states[two] = "RESOLVED"
+    api.deleted.add(three)
+    check = f'grep -q \'"id": {two}\' "$GR_OPEN_TASKS" && exit 2'
+    second = f'{check}; echo \'{{"tasks": [], "resolved": [{one}]}}\''
+    run, api = _review(tmp_path, store, origin, api=api, scenarios=_incremental(second))
+    assert run.status is RunStatus.PASSED
+    assert api.resolved == [one]
+    assert api.statuses[-1] == (1, ReviewStatus.APPROVED)
+    assert store.comments.open_tasks("PROJ", "repo", 1) == []
+
+
+def test_tasks_left_open_by_user_still_need_work(
+    tmp_path: Path,
+    store: Store,
+    origin: Origin,
+) -> None:
+    first = '{"tasks": [{"text": "one"}, {"text": "two"}, {"text": "three"}]}'
+    _, api = _review(tmp_path, store, origin, scenarios=_incremental(f"echo '{first}'; exit 1"))
+    one, two, three = (task.id for task in api.tasks)
+    api.states[two] = "RESOLVED"
+    second = f'echo \'{{"tasks": [], "resolved": [{one}]}}\''
+    run, api = _review(tmp_path, store, origin, api=api, scenarios=_incremental(second))
+    assert run.status is RunStatus.ISSUES
+    assert api.statuses[-1] == (1, ReviewStatus.NEEDS_WORK)
+    assert [task.comment_id for task in store.comments.open_tasks("PROJ", "repo", 1)] == [three]
+
+
+def test_task_state_error_fails_run(tmp_path: Path, store: Store, origin: Origin) -> None:
+    first = _incremental('echo \'[{"text": "a"}]\'; exit 1')
+    _, api = _review(tmp_path, store, origin, scenarios=first)
+    api.comment_error = BitbucketError("denied", status_code=403)
+    run, api = _review(tmp_path, store, origin, api=api, scenarios=first)
+    assert run.status is RunStatus.ERROR
+    assert "denied" in run.error
+    assert len(store.comments.open_tasks("PROJ", "repo", 1)) == 1
+
+
 def test_failed_incremental_scenario_resolves_nothing(
     tmp_path: Path,
     store: Store,
