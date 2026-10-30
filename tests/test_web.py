@@ -298,6 +298,27 @@ def test_stale_csrf_cookie_is_replaced(client: Client, daemon: Daemon) -> None:
     assert daemon.status().paused
 
 
+def test_stale_login_form_keeps_target(secured: Client) -> None:
+    secured.cookies.set("gigareview_csrf", "0" * 128)
+    response = secured.post(
+        "/login",
+        data={"_csrf_token": "0" * 128, "token": TOKEN, "target": "/runs/7"},
+        headers={"referer": "http://testserver/login?target=%2Fruns%2F7"},
+        follow_redirects=False,
+    )
+    assert response.status_code == 303
+    location = response.headers["location"]
+    assert location.startswith("/login?error=")
+    assert location.endswith("&target=%2Fruns%2F7")
+    hostile = secured.post(
+        "/login",
+        data={"_csrf_token": "0" * 128, "token": TOKEN},
+        headers={"referer": "http://testserver/login?target=//evil.example.com"},
+        follow_redirects=False,
+    )
+    assert hostile.headers["location"].endswith("&target=%2F")
+
+
 def test_csrf_secret_survives_restart(daemon: Daemon, store: Store) -> None:
     with TestClient(app=create_app(daemon, store)) as first:
         headers = _csrf(first)

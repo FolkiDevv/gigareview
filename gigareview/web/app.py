@@ -18,7 +18,7 @@ from gigareview.daemon import Daemon
 from gigareview.store import Store
 from gigareview.web import actions, pages
 from gigareview.web.auth import TokenGuard, login, login_page
-from gigareview.web.deps import AnyRequest, back, redirect_with
+from gigareview.web.deps import AnyRequest, back, back_target, redirect_with
 from gigareview.web.formatting import FILTERS
 
 __all__ = ["create_app"]
@@ -107,7 +107,12 @@ def _csrf_failed(request: AnyRequest, error: PermissionDeniedException) -> Respo
     """
     if error.detail != _CSRF_FAILED or _CSRF_COOKIE not in request.cookies:
         return Response(error.detail, status_code=error.status_code)
-    response = redirect_with(back(request), error="The form has expired, please try again")
+    # Форма входа помнит, куда вернуться после входа.
+    response = redirect_with(
+        back(request),
+        error="The form has expired, please try again",
+        target=back_target(request),
+    )
     response.delete_cookie(_CSRF_COOKIE)
     return response
 
