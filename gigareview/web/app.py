@@ -2,11 +2,13 @@
 
 import secrets
 from pathlib import Path
+from typing import Final
 
-from litestar import Litestar
+from litestar import Litestar, Response
 from litestar.config.csrf import CSRFConfig
 from litestar.datastructures import State
 from litestar.di import Provide
+from litestar.exceptions import PermissionDeniedException
 from litestar.logging.config import LoggingConfig
 from litestar.plugins.jinja import JinjaTemplateEngine
 from litestar.static_files import create_static_files_router
@@ -16,11 +18,18 @@ from gigareview.daemon import Daemon
 from gigareview.store import Store
 from gigareview.web import actions, pages
 from gigareview.web.auth import TokenGuard, login, login_page
+from gigareview.web.deps import AnyRequest, back, back_target, redirect_with
 from gigareview.web.formatting import FILTERS
 
 __all__ = ["create_app"]
 
 _HERE = Path(__file__).parent
+# Своё имя cookie: дашборды на одном хосте (gigacrew, другие порты) делят cookie, и общее
+# имя csrftoken перезаписывалось бы чужим токеном с другой подписью.
+_CSRF_COOKIE: Final = "gigareview_csrf"
+#: Ключ подписи CSRF-токенов в ``daemon_state``.
+_CSRF_STATE: Final = "csrf_secret"
+_CSRF_FAILED: Final = "CSRF token verification failed"
 
 
 def create_app(daemon: Daemon, store: Store, *, csrf_secret: str = "") -> Litestar:
@@ -70,8 +79,42 @@ def create_app(daemon: Daemon, store: Store, *, csrf_secret: str = "") -> Litest
             root={"level": "WARNING", "handlers": ["queue_listener"]},
             log_exceptions="always",
         ),
-        csrf_config=CSRFConfig(secret=csrf_secret or secrets.token_urlsafe()),
+        csrf_config=CSRFConfig(
+            secret=csrf_secret or _csrf_secret(store),
+            cookie_name=_CSRF_COOKIE,
+        ),
+        exception_handlers={PermissionDeniedException: _csrf_failed},
     )
+
+
+def _csrf_secret(store: Store) -> str:
+    """Ключ подписи CSRF-токенов из базы (создаётся при первом запуске).
+
+    Ключ переживает перезапуск: иначе cookie, выданная прошлым процессом, не проходила бы
+    проверку, а Litestar такую cookie не перевыпускает.
+    """
+    secret = store.state.get(_CSRF_STATE)
+    if not secret:
+        secret = secrets.token_urlsafe()
+        store.state.set(_CSRF_STATE, secret)
+    return secret
+
+
+def _csrf_failed(request: AnyRequest, error: PermissionDeniedException) -> Response[str]:
+    """Форма с устаревшим CSRF-токеном: cookie сбрасывается, страница открывается заново.
+
+    Следующий GET выдаёт новую cookie, и повтор действия проходит. Остальные отказы — 403.
+    """
+    if error.detail != _CSRF_FAILED or _CSRF_COOKIE not in request.cookies:
+        return Response(error.detail, status_code=error.status_code)
+    # Форма входа помнит, куда вернуться после входа.
+    response = redirect_with(
+        back(request),
+        error="The form has expired, please try again",
+        target=back_target(request),
+    )
+    response.delete_cookie(_CSRF_COOKIE)
+    return response
 
 
 def _provide_daemon(state: State) -> Daemon:

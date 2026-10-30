@@ -1,7 +1,7 @@
 """Зависимости обработчиков и общие помощники страниц."""
 
 from typing import Any, Final
-from urllib.parse import urlencode, urlsplit
+from urllib.parse import parse_qs, urlencode, urlsplit
 
 from litestar import Request
 from litestar.datastructures import State
@@ -11,7 +11,16 @@ from litestar.response import Redirect
 from gigareview.daemon import Daemon
 from gigareview.store import Store
 
-__all__ = ["PAGE_SIZE", "AnyRequest", "DaemonDep", "StoreDep", "back", "redirect_with"]
+__all__ = [
+    "PAGE_SIZE",
+    "AnyRequest",
+    "DaemonDep",
+    "StoreDep",
+    "back",
+    "back_target",
+    "local_path",
+    "redirect_with",
+]
 
 #: Записей на странице списков.
 PAGE_SIZE = 50
@@ -33,6 +42,20 @@ def back(request: AnyRequest, fallback: str = "/") -> str:
     path = referer.path or fallback
     if not path.startswith("/") or path.startswith("//"):
         return fallback
+    return path
+
+
+def back_target(request: AnyRequest) -> str:
+    """Параметр ``target`` страницы, с которой пришёл запрос (только путь этого сервера)."""
+    query = parse_qs(urlsplit(request.headers.get("referer", "")).query)
+    targets = query.get("target")
+    return local_path(targets[0]) if targets else ""
+
+
+def local_path(path: str) -> str:
+    """Путь на этом же сервере; адрес другого хоста (``//host`` и подобные) — ``/``."""
+    if not path.startswith("/") or path.startswith(("//", "/\\")):
+        return "/"
     return path
 
 

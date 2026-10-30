@@ -18,7 +18,7 @@ from litestar.enums import MediaType, RequestEncodingType
 from litestar.params import Body, FromQuery
 from litestar.response import Redirect, Template
 
-from gigareview.web.deps import AnyRequest, redirect_with
+from gigareview.web.deps import AnyRequest, local_path, redirect_with
 
 __all__ = ["GuardDep", "LoginForm", "TokenGuard", "login", "login_page"]
 
@@ -99,7 +99,7 @@ class TokenGuard:
         if path.startswith(_OPEN_PATHS) or self.authorized(request):
             return None
         if request.method == "GET" and not path.startswith("/api/"):
-            return redirect_with("/login", target=_local_path(path))
+            return redirect_with("/login", target=local_path(path))
         return Response(
             "Unauthorized",
             status_code=_UNAUTHORIZED,
@@ -119,10 +119,14 @@ GuardDep = NamedDependency[TokenGuard]
 
 @dataclass(frozen=True, slots=True)
 class LoginForm:
-    """Форма входа: токен и страница, на которую вернуться."""
+    """Форма входа: токен и страница, на которую вернуться.
+
+    ``username`` — постоянное скрытое поле для менеджеров паролей; сервер его не проверяет.
+    """
 
     token: str
     target: str = "/"
+    username: str = ""
 
 
 @get("/login", name="login_page", sync_to_thread=False)
@@ -130,7 +134,7 @@ def login_page(target: FromQuery[str] = "/", error: FromQuery[str] = "") -> Temp
     """Страница входа."""
     return Template(
         template_name="login.html",
-        context={"target": _local_path(target), "error": error},
+        context={"target": local_path(target), "error": error},
     )
 
 
@@ -142,7 +146,7 @@ def login(
     data: Annotated[LoginForm, Body(media_type=RequestEncodingType.URL_ENCODED)],  # noqa: WPS110
 ) -> Redirect:
     """Вход: верный токен — cookie сессии и возврат на страницу, неверный — снова форма."""
-    target = _local_path(data.target)
+    target = local_path(data.target)
     if not guard.check_token(data.token):
         return redirect_with("/login", error="Wrong token", target=target)
     return Redirect(
@@ -150,10 +154,3 @@ def login(
         status_code=_SEE_OTHER,
         cookies=[guard.session_cookie(secure=request.url.scheme == "https")],
     )
-
-
-def _local_path(path: str) -> str:
-    """Путь на этом же сервере; адрес другого хоста (``//host`` и подобные) — ``/``."""
-    if not path.startswith("/") or path.startswith(("//", "/\\")):
-        return "/"
-    return path

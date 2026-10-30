@@ -5,10 +5,13 @@
 <section class="login card">
   <h1>Sign in</h1>
   <p class="muted">Enter the dashboard token from the gigareview configuration (<span class="mono">dashboard.token</span>).</p>
-  <form method="post" action="/login">
+  <form method="post" action="/login" id="login-form">
     {{ csrf_input | safe }}
     <input type="hidden" name="target" value="{{ target }}">
-    <input type="password" name="token" placeholder="Token" autocomplete="current-password" required autofocus>
+    {# Менеджеры паролей распознают форму входа по паре «логин + пароль»: логин фиксированный и скрыт. #}
+    <input type="text" id="username" name="username" value="gigareview" autocomplete="username" class="visually-hidden" tabindex="-1" aria-hidden="true">
+    <label for="password" class="visually-hidden">Token</label>
+    <input type="password" id="password" name="token" placeholder="Token" autocomplete="current-password" required autofocus>
     <button type="submit" class="btn primary">Sign in</button>
   </form>
 </section>

@@ -8,8 +8,10 @@ from litestar.exceptions import NotFoundException
 from litestar.params import FromPath, FromQuery
 from litestar.response import Redirect, Template
 
+from gigareview.config import Config, Scenario
+from gigareview.pipeline import review_order
 from gigareview.statuses import EventLevel, Outcome, RunStatus
-from gigareview.store import RunFilter
+from gigareview.store import RunFilter, RunRecord, ScenarioRecord
 from gigareview.store.clock import utc_now
 from gigareview.web.deps import PAGE_SIZE, DaemonDep, StoreDep
 
@@ -84,21 +86,27 @@ def runs_page(
 
 @get("/runs/{run_id:int}", name="run", sync_to_thread=False)
 def run_page(
+    daemon: DaemonDep,
     store: StoreDep,
     run_id: FromPath[int],
     notice: FromQuery[str] = "",
     error: FromQuery[str] = "",
 ) -> Template:
-    """Прогон: подготовка, каждый сценарий с полным выводом, комментарии в Bitbucket."""
+    """Прогон: подготовка, каждый сценарий с полным выводом, комментарии в Bitbucket.
+
+    Пока прогон идёт, после завершённых сценариев видны текущий и ожидающие.
+    """
     run = store.runs.get(run_id)
     if run is None:
         raise NotFoundException(f"Run #{run_id} not found")
+    scenarios = store.runs.scenarios(run_id)
     return _page(
         "run.html",
         notice=notice,
         error=error,
         run=run,
-        scenarios=store.runs.scenarios(run_id),
+        scenarios=scenarios,
+        upcoming=_upcoming(daemon.config, run, scenarios),
         comments=store.comments.for_run(run_id),
     )
 
@@ -159,6 +167,28 @@ def api_status(daemon: DaemonDep, store: StoreDep) -> dict[str, Any]:
         "active_runs": list(status.active_runs),
         "runs": {str(key): count for key, count in stats.by_status.items()},
     }
+
+
+def _upcoming(
+    config: Config,
+    run: RunRecord,
+    finished: list[ScenarioRecord],
+) -> list[tuple[Scenario, RunStatus]]:
+    """Ещё не завершённые сценарии идущего прогона: первый — выполняется, остальные ждут.
+
+    Список берётся из текущей конфигурации; пока копия PR готовится, ждут все.
+    """
+    repo = config.find_repo(run.project, run.repo)
+    if repo is None or run.status not in {RunStatus.QUEUED, RunStatus.RUNNING}:
+        return []
+    done = {scenario.name for scenario in finished}
+    order = review_order(config.scenarios_for(repo))
+    left = [scenario for scenario in order if scenario.name not in done]
+    started = run.status is RunStatus.RUNNING and bool(run.setup_log or finished)
+    return [
+        (scenario, RunStatus.RUNNING if started and index == 0 else RunStatus.QUEUED)
+        for index, scenario in enumerate(left)
+    ]
 
 
 def _page(template_name: str, **context: Any) -> Template:
