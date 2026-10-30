@@ -184,14 +184,15 @@ def _decision_note(
 ) -> str:
     """Решение по статусу ревью для журнала; ``held`` — ручные таски, придержавшие PR."""
     was = current or "—"
+    tasks = ", ".join(f"#{task_id}" for task_id in held)
+    held_reason = f"открыта ручная таска пользователя демона {tasks}"
     if decision is None:
+        if held:
+            return f"статус ревью не меняется: уже {was} ({held_reason})"
         if status is RunStatus.FAILED:
             return f"статус ревью не меняется ({was}): часть проверок не удалась"
         return f"статус ревью не меняется: {was}"
-    reason = _REASONS[decision]
-    if held:
-        tasks = ", ".join(f"#{task_id}" for task_id in held)
-        reason = f"открыта ручная таска пользователя демона {tasks}"
+    reason = held_reason if held else _REASONS[decision]
     return f"статус ревью: {was} → {decision} ({reason})"
 
 

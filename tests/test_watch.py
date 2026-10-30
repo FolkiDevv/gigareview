@@ -625,3 +625,46 @@ def test_settle_obstacle_is_logged(
     api.overrides[1] = with_status(make_pr(commit="new"), "NEEDS_WORK")
     _check(store, api, config, listed)
     assert "PROJ/repo#1: в PR новый коммит — статус поставит его прогон" in _messages(store)
+
+
+def test_held_run_on_needs_work_names_manual_task(
+    tmp_path: Path,
+    store: Store,
+    origin: Origin,
+    clock: Clock,
+) -> None:
+    config = make_config(tmp_path / "home", origin.url)
+    pr = with_status(make_pr(commit=origin.feature), "NEEDS_WORK")
+    api = FakeBitbucket(prs=[pr])
+    manual = api.add_task(1, "своё замечание")
+    run_id = store.runs.create(new_run(pr, Trigger.AUTO, fingerprint="fp", dry_run=False))
+    asyncio.run(Reviewer(config, store, api).review(run_id, pr))
+    assert api.statuses == []
+    expected = (
+        "PROJ/repo#1: статус ревью не меняется: уже NEEDS_WORK (открыта ручная таска "
+        f"пользователя демона #{manual})"
+    )
+    assert expected in _messages(store)
+
+
+def test_reopen_blocked_by_new_commit_is_retried(
+    tmp_path: Path,
+    store: Store,
+    origin: Origin,
+    clock: Clock,
+) -> None:
+    api, config = _reviewed(tmp_path, store, origin, resolve_delay_minutes=0)
+    _close_all(api)
+    _check(store, api, config)
+    assert api.statuses[-1] == (1, ReviewStatus.APPROVED)
+    api.states[api.tasks[0].id] = "OPEN"
+    api.overrides[1] = with_status(make_pr(commit="new"), "APPROVED")
+    clock.advance(30)
+    _check(store, api, config)
+    assert api.statuses[-1] == (1, ReviewStatus.APPROVED)
+    assert store.watch.get("PROJ", "repo", 1, 1).settled_status == "APPROVED"
+    api.overrides.clear()
+    clock.advance(30)
+    _check(store, api, config)
+    assert api.statuses[-1] == (1, ReviewStatus.NEEDS_WORK)
+    assert not store.watch.get("PROJ", "repo", 1, 1).settled_status

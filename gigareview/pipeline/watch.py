@@ -182,8 +182,8 @@ class TaskWatch:
         if bot_tasks or states.manual:
             self._note(pr, EventLevel.NOTE, _blocked_text(bot_tasks, states.manual), run.id)
             watch = replace(watch, clear_since=None)
-            if watch.settled_status:
-                await self._reopen(pr, run, watch, config)
+            # Не удалось вернуть NEEDS_WORK — статус наблюдения прежний: следующая сверка повторит.
+            if watch.settled_status and await self._reopen(pr, run, watch, config):
                 watch = replace(watch, settled_status="")
             return watch
         clear_since = watch.clear_since or utc_now()
@@ -206,10 +206,10 @@ class TaskWatch:
         run: RunRecord,
         watch: TaskWatchRecord,
         config: Config,
-    ) -> None:
+    ) -> bool:
         """Таску открыли заново после снятия NEEDS_WORK: вернуть «Требуются изменения»."""
         change = (ReviewStatus(watch.settled_status), ReviewStatus.NEEDS_WORK)
-        await self._settle(pr, run, change, config)
+        return await self._settle(pr, run, change, config)
 
     def _target(self, run: RunRecord, config: Config) -> ReviewStatus:
         """APPROVED, если можно одобрять и все проверки прогона отработали; иначе UNAPPROVED."""
