@@ -55,9 +55,18 @@
     {% if scenario.validate_output %}<details><summary>Validation output</summary><pre>{{ scenario.validate_output }}</pre></details>{% endif %}
     {% if scenario.format_output %}<details><summary>Format output</summary><pre>{{ scenario.format_output }}</pre></details>{% endif %}
   </article>
-  {% else %}
-  <p class="empty">{% if run.status in ("queued", "running") %}Scenarios are still running…{% else %}No scenarios were run{% endif %}</p>
   {% endfor %}
+  {% for scenario, state in upcoming %}
+  <article class="scenario o-{{ state }}">
+    <header>
+      <strong>{{ scenario.display_title }}</strong> <span class="muted mono small">{{ scenario.name }} · {{ scenario.kind }}</span>
+      {{ badge(state) }}
+    </header>
+  </article>
+  {% endfor %}
+  {% if not scenarios and not upcoming %}
+  <p class="empty">{% if run.status in ("queued", "running") %}Scenarios are still running…{% else %}No scenarios were run{% endif %}</p>
+  {% endif %}
 
   {% if comments %}
   <h2>Bitbucket comments</h2>

@@ -20,7 +20,7 @@ from gigareview.scenarios import ScenarioContext, ScenarioReport, overall_status
 from gigareview.statuses import EventLevel, RunStatus, Trigger
 from gigareview.store import NewRun, RunRecord, ScenarioRecord, Store
 
-__all__ = ["Reviewer", "new_run"]
+__all__ = ["Reviewer", "new_run", "review_order"]
 
 _DRY_RUN_NOTE = "Сухой режим: в Bitbucket ничего не опубликовано"
 _CHANGED_NOTE = "PR изменился во время прогона: результаты не опубликованы"
@@ -287,6 +287,11 @@ def _phases(scenarios: Sequence[Scenario]) -> list[tuple[Scenario, ...]]:
     simple = tuple(scenario for scenario in scenarios if scenario.kind is ScenarioKind.SIMPLE)
     smart = tuple(scenario for scenario in scenarios if scenario.kind is ScenarioKind.AI)
     return [phase for phase in (simple, smart) if phase]
+
+
+def review_order(scenarios: Sequence[Scenario]) -> tuple[Scenario, ...]:
+    """Сценарии в порядке выполнения прогоном (этапы друг за другом)."""
+    return tuple(chain.from_iterable(_phases(scenarios)))
 
 
 def _pr_label(pr: PullRequest) -> str:

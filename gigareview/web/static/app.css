@@ -107,6 +107,7 @@ table.grid { width: 100%; border-collapse: collapse; }
 .scenario.o-passed { border-left-color: var(--ok); }
 .scenario.o-issues { border-left-color: var(--bad); }
 .scenario.o-error { border-left-color: var(--warn); }
+.scenario.o-running { border-left-color: var(--accent); }
 .scenario header { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 6px; }
 .codes { color: var(--muted); margin-bottom: 8px; }
 

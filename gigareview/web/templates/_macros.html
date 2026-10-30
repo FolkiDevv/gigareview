@@ -24,7 +24,7 @@ id="live"{% if enabled %} hx-get="{{ request.url }}" hx-trigger="every {{ every 
     <tr>
       <td><a href="/runs/{{ run.id }}">#{{ run.id }}</a></td>
       <td>
-        <a href="/runs/{{ run.id }}">{{ run.repo_key }}#{{ run.pr_id }}</a>
+        {% if run.pr_url %}<a href="{{ run.pr_url }}" target="_blank" rel="noopener">{{ run.repo_key }}#{{ run.pr_id }}</a>{% else %}{{ run.repo_key }}#{{ run.pr_id }}{% endif %}
         <div class="muted small ellipsis">{{ run.pr_title }}</div>
       </td>
       <td class="mono">{{ run.short_commit }}</td>

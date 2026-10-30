@@ -67,7 +67,7 @@ def _seed(store: Store) -> int:
 
 def _csrf(client: Client) -> dict[str, str]:
     client.get("/")
-    return {"x-csrftoken": client.cookies["csrftoken"]}
+    return {"x-csrftoken": client.cookies["gigareview_csrf"]}
 
 
 def test_overview(client: Client, store: Store) -> None:
@@ -79,6 +79,7 @@ def test_overview(client: Client, store: Store) -> None:
     assert "что-то сломалось" in response.text
     assert 'hx-trigger="every 3s"' in response.text
     assert "_csrf_token" in response.text
+    assert 'href="https://bb.example.com/pr/1"' in response.text
 
 
 def test_runs_page_and_filters(client: Client, store: Store) -> None:
@@ -103,6 +104,39 @@ def test_run_page(client: Client, store: Store) -> None:
     assert "&lt;script&gt;" in page.text
     assert "hx-trigger" not in page.text
     assert client.get("/runs/999").status_code == 404
+
+
+def test_run_page_shows_unfinished_scenarios(tmp_path: Path, store: Store) -> None:
+    scenarios = {
+        "review": {"run": "true", "kind": "ai", "title": "ИИ-ревью"},
+        "lint": {"run": "true", "title": "Линтер"},
+        "tests": {"run": "true"},
+    }
+    config = make_config(tmp_path / "home", "unused", scenarios=scenarios)
+    app = create_app(Daemon(config, store, FakeBitbucket()), store, csrf_secret="test")
+    run_id = store.runs.create(new_run(make_pr(1), Trigger.AUTO, fingerprint="fp", dry_run=False))
+    with TestClient(app=app) as test_client:
+        queued = test_client.get(f"/runs/{run_id}").text
+        assert queued.count('class="scenario o-queued"') == 3
+        store.runs.mark_running(run_id)
+        store.runs.append_setup_log(run_id, "$ git fetch\n")
+        store.runs.add_scenario(
+            run_id,
+            0,
+            ScenarioRecord("lint", "Линтер", "simple", Outcome.PASSED, 0, "", 1.0),
+        )
+        running = test_client.get(f"/runs/{run_id}").text
+        assert running.count('class="scenario o-passed"') == 1
+        assert running.count('class="scenario o-running"') == 1
+        assert running.count('class="scenario o-queued"') == 1
+        # Порядок прогона: обычные сценарии, затем ИИ.
+        order = ("Линтер", "tests", "ИИ-ревью")
+        positions = [running.index(f"<strong>{title}</strong>") for title in order]
+        assert positions == sorted(positions)
+        store.runs.finish(run_id, RunStatus.PASSED)
+        finished = test_client.get(f"/runs/{run_id}").text
+        assert "o-running" not in finished
+        assert "o-queued" not in finished
 
 
 def test_other_pages(client: Client, store: Store) -> None:
@@ -230,6 +264,37 @@ def test_session_rejects_forged_values() -> None:
 
 def test_post_requires_csrf(client: Client) -> None:
     assert client.post("/actions/poll").status_code == 403
+
+
+def test_stale_csrf_cookie_is_replaced(client: Client, daemon: Daemon) -> None:
+    client.cookies.set("gigareview_csrf", "0" * 128)
+    page = client.get("/")
+    stale = re.search(r'name="_csrf_token" value="([^"]+)"', page.text)
+    assert stale is not None
+    response = client.post(
+        "/actions/pause",
+        data={"_csrf_token": stale.group(1)},
+        headers={"referer": "http://testserver/config"},
+        follow_redirects=False,
+    )
+    assert response.status_code == 303
+    assert response.headers["location"].startswith("/config?error=")
+    assert response.headers["set-cookie"].startswith('gigareview_csrf="";')
+    # Браузер удаляет cookie по ответу; в тестовом клиенте её задали без домена.
+    client.cookies.clear()
+    assert not daemon.status().paused
+    client.post("/actions/pause", headers=_csrf(client), follow_redirects=False)
+    assert daemon.status().paused
+
+
+def test_csrf_secret_survives_restart(daemon: Daemon, store: Store) -> None:
+    with TestClient(app=create_app(daemon, store)) as first:
+        headers = _csrf(first)
+    with TestClient(app=create_app(daemon, store)) as second:
+        second.cookies.set("gigareview_csrf", headers["x-csrftoken"])
+        response = second.post("/actions/pause", headers=headers, follow_redirects=False)
+    assert response.status_code == 303
+    assert daemon.status().paused
 
 
 def test_pause_resume_poll(client: Client, daemon: Daemon) -> None:
