@@ -2,7 +2,7 @@
 
 import asyncio
 import contextlib
-from collections import defaultdict
+from collections import Counter, defaultdict
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -19,6 +19,7 @@ __all__ = ["Daemon", "DaemonStatus"]
 
 _PAUSED = "paused"
 _LAST_POLL = "last_poll"
+_POLL_KEY = "poll"
 
 
 @dataclass(frozen=True, slots=True)
@@ -107,8 +108,10 @@ class Daemon:
         self._store.state.set(_LAST_POLL, stamp())
         queued = 0
         skipped = []
+        unknown: Counter[str] = Counter()
         for pr in prs:
             if self.config.find_repo(pr.project, pr.repo) is None:
+                unknown[f"{pr.project}/{pr.repo}"] += 1
                 continue
             if self._store.runs.should_skip(
                 pr.project,
@@ -121,6 +124,12 @@ class Daemon:
                 continue
             self.enqueue(pr, Trigger.AUTO)
             queued += 1
+        # Сводка — только когда она изменилась: время опроса и так видно на Overview.
+        self._event(
+            EventLevel.DEBUG,
+            _poll_summary(len(prs), unknown, queued, len(skipped)),
+            key=_POLL_KEY,
+        )
         await self._watch.check(skipped, self.config)
         return queued
 
@@ -237,5 +246,22 @@ class Daemon:
                 self._active.discard(job.run_id)
             self._queue.task_done()
 
-    def _event(self, level: EventLevel, message: str, run_id: int | None = None) -> None:
-        self._store.events.add(level, message, run_id)
+    def _event(
+        self,
+        level: EventLevel,
+        message: str,
+        run_id: int | None = None,
+        *,
+        key: str = "",
+    ) -> None:
+        self._store.events.add(level, message, run_id, key=key)
+
+
+def _poll_summary(total: int, unknown: Counter[str], queued: int, skipped: int) -> str:
+    """Сводка опроса для журнала: сколько PR и что с ними сделано."""
+    parts = [f"Опрос Bitbucket: PR {total}"]
+    if unknown:
+        repos = ", ".join(f"{repo} ({count})" for repo, count in sorted(unknown.items()))
+        parts.append(f"вне конфигурации {unknown.total()}: {repos}")
+    parts.extend((f"в очередь {queued}", f"уже проверены или проверяются {skipped}"))
+    return "; ".join(parts)

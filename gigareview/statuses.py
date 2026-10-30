@@ -54,6 +54,7 @@ class ReviewStatus(StrEnum):
 class EventLevel(StrEnum):
     """Уровень записи в журнале демона."""
 
+    DEBUG = "debug"  # подробности: каждое решение демона
     NOTE = "info"
     WARNING = "warning"
     ERROR = "error"

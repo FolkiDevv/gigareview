@@ -11,8 +11,8 @@ from gigareview.config import Config
 from gigareview.errors import BitbucketError
 from gigareview.pipeline import Reviewer, TaskWatch, new_run
 from gigareview.pipeline import watch as watch_module
-from gigareview.statuses import EventLevel, ReviewStatus, RunStatus, Trigger
-from gigareview.store import Store
+from gigareview.statuses import EventLevel, Outcome, ReviewStatus, RunStatus, Trigger
+from gigareview.store import ScenarioRecord, Store
 
 _TASKS = '{"tasks": [{"text": "one"}, {"text": "two"}]}'
 _START = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
@@ -230,6 +230,9 @@ def test_task_reopened_after_approval_needs_work_again(
     api.states[api.tasks[1].id] = "OPEN"
     clock.advance(10)
     _check(store, api, config)
+    assert api.statuses[-1] == (1, ReviewStatus.APPROVED)
+    clock.advance(20)
+    _check(store, api, config)
     assert api.statuses[-1] == (1, ReviewStatus.NEEDS_WORK)
     assert "Итог: ❌ есть замечания" in api.status_texts[-1]
     _close_all(api)
@@ -311,6 +314,8 @@ def test_active_run_and_dry_run_are_skipped(
     queued = store.runs.create(new_run(api.prs[0], Trigger.MANUAL, fingerprint="", dry_run=False))
     _check(store, api, config)
     assert api.calls == []
+    active = f"PROJ/repo#1: прогон #{queued} (queued, запуск: manual) — статус поставит он"
+    assert active in _messages(store, EventLevel.DEBUG)
     store.runs.finish(queued, RunStatus.INTERRUPTED)
     _check(store, api, config)
     assert api.statuses[-1] == (1, ReviewStatus.APPROVED)
@@ -392,3 +397,213 @@ def test_passed_run_with_manual_needs_work_is_left_alone(
     api.calls.clear()
     _check(store, api, config)
     assert api.calls == []
+
+
+def test_review_logs_scenarios_and_status_decision(
+    tmp_path: Path,
+    store: Store,
+    origin: Origin,
+    clock: Clock,
+) -> None:
+    _reviewed(tmp_path, store, origin)
+    messages = _messages(store)
+    assert any("сценарий ai: issues, тасок 2" in message for message in messages)
+    assert any("таски этапа: опубликовано 2, закрыто прежних 0" in message for message in messages)
+    assert "PROJ/repo#1: статус ревью: UNAPPROVED → NEEDS_WORK (есть замечания)" in messages
+    assert any("новых коммитов не будет 15 мин" in message for message in messages)
+
+
+def test_watch_log_tells_the_story_once(
+    tmp_path: Path,
+    store: Store,
+    origin: Origin,
+    clock: Clock,
+) -> None:
+    api, config = _reviewed(tmp_path, store, origin, resolve_delay_minutes=5)
+    first, second = (task.id for task in api.tasks)
+    _check(store, api, config)
+    blocked = f"PROJ/repo#1: «Требуются изменения» остаются: открыты таски бота #{first}, #{second}"
+    assert _messages(store).count(blocked) == 1
+    _close_all(api)
+    for _ in range(6):
+        clock.advance(2)
+        _check(store, api, config)
+    messages = _messages(store)
+    assert messages.count(f"PROJ/repo#1: таски закрыты вручную: #{first}, #{second}") == 1
+    quiet = [message for message in messages if "тишина 5 мин" in message]
+    assert len(quiet) == 1
+    assert "PR будет одобрен" in quiet[0]
+    assert sum("Bitbucket не отдаёт счётчики тасок" in message for message in messages) == 1
+    assert api.statuses[-1] == (1, ReviewStatus.APPROVED)
+    assert messages[0] == "PROJ/repo#1: все таски gigareview закрыты вручную — PR одобрен"
+
+
+def test_manual_task_is_named_in_log(
+    tmp_path: Path,
+    store: Store,
+    origin: Origin,
+    clock: Clock,
+) -> None:
+    api, config = _reviewed(tmp_path, store, origin, resolve_delay_minutes=0)
+    _close_all(api)
+    manual = api.add_task(1, "своё замечание")
+    _check(store, api, config)
+    expected = (
+        "PROJ/repo#1: «Требуются изменения» остаются: открыты ручные таски пользователя "
+        f"демона #{manual}"
+    )
+    assert expected in _messages(store, EventLevel.NOTE)
+
+
+def test_daemon_user_missing_from_reviewers_is_warned(
+    tmp_path: Path,
+    store: Store,
+    origin: Origin,
+    clock: Clock,
+) -> None:
+    api, config = _reviewed(tmp_path, store, origin, resolve_delay_minutes=0)
+    _close_all(api)
+    api.prs = [api.prs[0].model_copy(update={"reviewers": ()})]
+    _check(store, api, config)
+    assert api.calls == []
+    warnings = _messages(store, EventLevel.WARNING)
+    assert any("me не найден среди ревьюеров" in message for message in warnings)
+
+
+def test_status_changed_by_hand_is_logged(
+    tmp_path: Path,
+    store: Store,
+    origin: Origin,
+    clock: Clock,
+) -> None:
+    api, config = _reviewed(tmp_path, store, origin, resolve_delay_minutes=0)
+    api.prs = [with_status(api.prs[0], "APPROVED")]
+    _check(store, api, config)
+    _check(store, api, config)
+    notes = [message for message in _messages(store) if "изменили вручную" in message]
+    assert notes == [
+        (
+            "PROJ/repo#1: статус ревью APPROVED, а не NEEDS_WORK — его изменили вручную, "
+            "наблюдение не вмешивается"
+        ),
+    ]
+
+
+def _failed_run(store: Store, pr: PullRequest) -> int:
+    """Повтор того же коммита, где проверка упала: прогон ``failed`` опубликован."""
+    run_id = store.runs.create(new_run(pr, Trigger.MANUAL, fingerprint="fp", dry_run=False))
+    broken = ScenarioRecord("broken", "broken", "simple", Outcome.ERROR, 2, "", 1.0)
+    store.runs.add_scenario(run_id, 0, broken)
+    store.runs.finish(run_id, RunStatus.FAILED)
+    store.runs.mark_published(run_id)
+    return run_id
+
+
+def test_failed_run_lifts_needs_work_without_approval(
+    tmp_path: Path,
+    store: Store,
+    origin: Origin,
+    clock: Clock,
+) -> None:
+    api, config = _reviewed(tmp_path, store, origin, resolve_delay_minutes=5)
+    _failed_run(store, api.prs[0])
+    _close_all(api)
+    _check(store, api, config)
+    assert len(api.statuses) == 1
+    assert any(
+        "PR не одобрен: часть проверок не удалась" in message for message in _messages(store)
+    )
+    clock.advance(6)
+    _check(store, api, config)
+    assert api.statuses[-1] == (1, ReviewStatus.UNAPPROVED)
+
+
+def test_failed_run_without_needs_work_is_left_alone(
+    tmp_path: Path,
+    store: Store,
+    origin: Origin,
+    clock: Clock,
+) -> None:
+    api, config = _reviewed(tmp_path, store, origin, resolve_delay_minutes=0)
+    run_id = _failed_run(store, api.prs[0])
+    api.prs = [with_status(api.prs[0], "UNAPPROVED")]
+    _check(store, api, config)
+    assert api.calls == []
+    expected = (
+        f"PROJ/repo#1: прогон #{run_id}: часть проверок не удалась, статус ревью UNAPPROVED — "
+        "снимать нечего"
+    )
+    assert expected in _messages(store, EventLevel.DEBUG)
+
+
+def test_without_counts_checks_every_five_minutes_while_waiting(
+    tmp_path: Path,
+    store: Store,
+    origin: Origin,
+    clock: Clock,
+) -> None:
+    api, config = _reviewed(tmp_path, store, origin)
+    clock.advance(3 * 24 * 60)
+    _check(store, api, config)
+    clock.advance(5)
+    _check(store, api, config)
+    assert api.calls.count("list_tasks") == 2
+
+
+def test_without_counts_settled_pr_is_checked_every_half_hour(
+    tmp_path: Path,
+    store: Store,
+    origin: Origin,
+    clock: Clock,
+) -> None:
+    api, config = _reviewed(tmp_path, store, origin, resolve_delay_minutes=0)
+    _close_all(api)
+    _check(store, api, config)
+    assert api.statuses[-1] == (1, ReviewStatus.APPROVED)
+    api.calls.clear()
+    clock.advance(25)
+    _check(store, api, config)
+    assert api.calls == []
+    clock.advance(5)
+    _check(store, api, config)
+    assert api.calls == ["list_tasks"]
+
+
+def test_exhausted_commit_is_warned(
+    tmp_path: Path,
+    store: Store,
+    origin: Origin,
+    clock: Clock,
+) -> None:
+    api, config = _reviewed(tmp_path, store, origin)
+    pushed = with_status(make_pr(commit="new"), "NEEDS_WORK")
+    attempts = [
+        store.runs.create(new_run(pushed, Trigger.AUTO, fingerprint="", dry_run=False))
+        for _ in range(3)
+    ]
+    for attempt in attempts:
+        store.runs.finish(attempt, RunStatus.ERROR, "git fetch упал")
+    failed = attempts[-1]
+    _check(store, api, config, pushed)
+    assert api.calls == []
+    warnings = _messages(store, EventLevel.WARNING)
+    assert warnings == [
+        (
+            f"PROJ/repo#1: прогон #{failed} коммита new — error, итоги не опубликованы: коммит "
+            "автоматически больше не проверяется, повторить — Re-run в Web Dashboard"
+        ),
+    ]
+
+
+def test_settle_obstacle_is_logged(
+    tmp_path: Path,
+    store: Store,
+    origin: Origin,
+    clock: Clock,
+) -> None:
+    api, config = _reviewed(tmp_path, store, origin, resolve_delay_minutes=0)
+    _close_all(api)
+    listed = api.prs[0]
+    api.overrides[1] = with_status(make_pr(commit="new"), "NEEDS_WORK")
+    _check(store, api, config, listed)
+    assert "PROJ/repo#1: в PR новый коммит — статус поставит его прогон" in _messages(store)

@@ -12,14 +12,18 @@ __all__ = ["TaskStates", "fetch_task_states"]
 
 @dataclass(frozen=True, slots=True)
 class TaskStates:
-    """Снимок тасок PR: версии открытых и число ручных тасок пользователя демона.
+    """Снимок тасок PR: версии открытых и ручные таски пользователя демона.
 
-    ``versions`` — номер открытой таски → её версия в Bitbucket; ``manual`` — открытые таски
-    от имени пользователя демона, которые демон не публиковал (их оставил сам пользователь).
+    ``versions`` — номер открытой таски → её версия в Bitbucket; ``manual`` — номера открытых
+    тасок от имени пользователя демона, которые демон не публиковал (их оставил сам
+    пользователь); ``dismissed`` и ``reopened`` — номера тасок демона, которые эта сверка
+    отметила закрытыми людьми и открытыми заново.
     """
 
     versions: Mapping[int, int]
-    manual: int = 0
+    manual: tuple[int, ...] = ()
+    dismissed: tuple[int, ...] = ()
+    reopened: tuple[int, ...] = ()
 
     def is_open(self, comment_id: int) -> bool:
         """Таска открыта в Bitbucket."""
@@ -49,17 +53,23 @@ async def fetch_task_states(
     if counts is None or counts[0]:
         comments = await api.list_tasks(pr)
     opened = {comment.id: comment for comment in comments if comment.is_open}
-    for record in records:
-        is_open = record.comment_id in opened
-        if is_open and record.resolved:
-            store.comments.mark_open(record.id)
-        elif not is_open and not record.resolved:
-            store.comments.mark_dismissed(record.id)
+    reopened = [record for record in records if record.resolved and record.comment_id in opened]
+    dismissed = [
+        record for record in records if not record.resolved and record.comment_id not in opened
+    ]
+    for record in reopened:
+        store.comments.mark_open(record.id)
+    for gone in dismissed:
+        store.comments.mark_dismissed(gone.id)
     known = {known_task.comment_id for known_task in records}
-    manual = sum(
-        1
+    manual = tuple(
+        comment.id
         for comment in opened.values()
-        if comment.id not in known and slug and slug in {comment.author.slug, comment.author.name}
+        if comment.id not in known and comment.author.matches(slug)
     )
-    versions = {comment.id: comment.version for comment in opened.values()}
-    return TaskStates(MappingProxyType(versions), manual)
+    return TaskStates(
+        MappingProxyType({comment.id: comment.version for comment in opened.values()}),
+        manual,
+        dismissed=tuple(task.comment_id for task in dismissed),
+        reopened=tuple(task.comment_id for task in reopened),
+    )

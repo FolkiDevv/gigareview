@@ -30,14 +30,31 @@ class WatchRepository:
         ).fetchone()
         return None if row is None else RunRecord.from_row(row)
 
-    def has_active(self, project: str, repo: str, pr_id: int) -> bool:
-        """У PR есть прогон в очереди или в работе: статус поставит он."""
+    def active_run(self, project: str, repo: str, pr_id: int) -> RunRecord | None:
+        """Прогон PR в очереди или в работе (статус поставит он), если такой есть."""
         row = self._db.execute(
             # В текст запроса подставляются только условия из кода.
-            f"SELECT 1 FROM runs WHERE {_PR_CONDITION} AND status IN (?, ?) LIMIT 1",  # noqa: S608
+            f"SELECT * FROM runs WHERE {_PR_CONDITION} AND status IN (?, ?) "  # noqa: S608
+            "ORDER BY id DESC LIMIT 1",
             (project, repo, pr_id, *_ACTIVE),
         ).fetchone()
-        return row is not None
+        return None if row is None else RunRecord.from_row(row)
+
+    def latest_on_commit(
+        self,
+        project: str,
+        repo: str,
+        pr_id: int,
+        commit_id: str,
+    ) -> RunRecord | None:
+        """Последний прогон коммита PR (любой, кроме сухого): для журнала наблюдения."""
+        row = self._db.execute(
+            # В текст запроса подставляются только условия из кода.
+            f"SELECT * FROM runs WHERE {_PR_CONDITION} AND commit_id = ? "  # noqa: S608
+            "AND dry_run = 0 ORDER BY id DESC LIMIT 1",
+            (project, repo, pr_id, commit_id),
+        ).fetchone()
+        return None if row is None else RunRecord.from_row(row)
 
     def is_published(self, project: str, repo: str, pr_id: int, commit_id: str) -> bool:
         """Итоги проверки коммита PR уже опубликованы каким-то прогоном."""
