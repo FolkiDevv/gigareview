@@ -119,10 +119,14 @@ GuardDep = NamedDependency[TokenGuard]
 
 @dataclass(frozen=True, slots=True)
 class LoginForm:
-    """Форма входа: токен и страница, на которую вернуться."""
+    """Форма входа: токен и страница, на которую вернуться.
+
+    ``username`` — постоянное скрытое поле для менеджеров паролей; сервер его не проверяет.
+    """
 
     token: str
     target: str = "/"
+    username: str = ""
 
 
 @get("/login", name="login_page", sync_to_thread=False)

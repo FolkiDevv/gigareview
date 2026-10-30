@@ -196,7 +196,12 @@ def _login(client: Client, token: str, target: str = "/runs") -> Response:
     assert csrf is not None
     return client.post(
         "/login",
-        data={"_csrf_token": csrf.group(1), "token": token, "target": target},
+        data={
+            "_csrf_token": csrf.group(1),
+            "username": "gigareview",
+            "token": token,
+            "target": target,
+        },
         follow_redirects=False,
     )
 
@@ -212,6 +217,12 @@ def test_secured_dashboard_redirects_to_login(secured: Client) -> None:
     assert secured.get("/api/status").status_code == 401
     assert secured.get("/static/app.css").status_code == 200
     assert secured.get("/favicon.ico", follow_redirects=False).is_redirect
+
+
+def test_login_form_is_recognisable_by_password_managers(secured: Client) -> None:
+    page = secured.get("/login").text
+    assert 'autocomplete="username"' in page
+    assert 'autocomplete="current-password"' in page
 
 
 def test_secured_dashboard_login(secured: Client) -> None:
