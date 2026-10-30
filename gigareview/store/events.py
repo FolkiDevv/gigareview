@@ -32,14 +32,15 @@ class EventRepository:
         подряд не повторяется, так опрос раз в минуту не засоряет журнал. Память — на процесс:
         после перезапуска текущее состояние записывается ещё раз.
         """
-        if key:
-            if self._last.get(key) == message:
-                return
-            self._last[key] = message
+        if key and self._last.get(key) == message:
+            return
         self._db.execute(
             "INSERT INTO events (created_at, level, message, run_id) VALUES (?, ?, ?, ?)",
             (stamp(), level.value, message, run_id),
         )
+        # После записи: сбой базы не должен помешать записать то же решение в следующий раз.
+        if key:
+            self._last[key] = message
 
     def list(
         self,

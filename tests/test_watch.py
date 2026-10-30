@@ -413,6 +413,24 @@ def test_review_logs_scenarios_and_status_decision(
     assert any("новых коммитов не будет 15 мин" in message for message in messages)
 
 
+def test_force_push_back_to_reviewed_commit_is_not_warned(
+    tmp_path: Path,
+    store: Store,
+    origin: Origin,
+    clock: Clock,
+) -> None:
+    api, config = _reviewed(tmp_path, store, origin)
+    old = api.prs[0]
+    pushed = with_status(make_pr(commit="new"), "NEEDS_WORK")
+    newer = store.runs.create(new_run(pushed, Trigger.AUTO, fingerprint="", dry_run=False))
+    store.runs.finish(newer, RunStatus.ISSUES)
+    store.runs.mark_published(newer)
+    _check(store, api, config, old)
+    assert api.calls == []
+    assert _messages(store, EventLevel.WARNING) == []
+    assert any("опубликован прогон другого коммита" in message for message in _messages(store))
+
+
 def test_watch_log_tells_the_story_once(
     tmp_path: Path,
     store: Store,

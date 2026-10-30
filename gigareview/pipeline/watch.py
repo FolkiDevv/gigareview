@@ -117,6 +117,13 @@ class TaskWatch:
             self._note(pr, EventLevel.DEBUG, "опубликованного прогона коммита нет", None)
         elif latest.status.is_active:
             self._note(pr, EventLevel.DEBUG, _active_text(latest), latest.id)
+        elif latest.published:
+            # Force-push назад, на уже проверенный коммит: в силе прогон другого коммита.
+            message = (
+                f"прогон #{latest.id} коммита {latest.short_commit} опубликован, но после него "
+                "опубликован прогон другого коммита — наблюдение не ведётся"
+            )
+            self._note(pr, EventLevel.DEBUG, message, latest.id)
         else:
             message = (
                 f"прогон #{latest.id} коммита {latest.short_commit} — {latest.status}, итоги не "
