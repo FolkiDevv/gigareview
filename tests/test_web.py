@@ -144,6 +144,11 @@ def test_other_pages(client: Client, store: Store) -> None:
     assert "PROJ/repo#1" in client.get("/prs").text
     events = client.get("/events", params={"level": "error"})
     assert "что-то сломалось" in events.text
+    store.events.add(EventLevel.DEBUG, "подробность опроса")
+    debug = client.get("/events", params={"level": "debug"})
+    assert "подробность опроса" in debug.text
+    assert "что-то сломалось" not in debug.text
+    assert '<option value="debug" selected>debug</option>' in debug.text
     config = client.get("/config")
     assert "$GR_TEST_TOKEN" in config.text
     assert "PROJ/repo" in config.text

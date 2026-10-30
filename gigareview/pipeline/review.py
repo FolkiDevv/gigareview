@@ -24,6 +24,11 @@ __all__ = ["Reviewer", "new_run", "review_order"]
 
 _DRY_RUN_NOTE = "Сухой режим: в Bitbucket ничего не опубликовано"
 _CHANGED_NOTE = "PR изменился во время прогона: результаты не опубликованы"
+#: После таких прогонов PR может остаться в NEEDS_WORK — его снимет наблюдение.
+_WATCHED = frozenset((RunStatus.ISSUES, RunStatus.FAILED))
+#: Сколько символов ошибки сценария показывать в журнале (полная — на странице прогона).
+_ERROR_CHARS = 200
+_SHORT_COMMIT = 10
 
 
 def new_run(pr: PullRequest, trigger: Trigger, *, fingerprint: str, dry_run: bool) -> NewRun:
@@ -165,6 +170,7 @@ class Reviewer:
             report = await self._run_one(progress.pr, scenario, context)  # noqa: WPS476
             position = len(progress.reports)
             self._store.runs.add_scenario(progress.run.id, position, _record(report))
+            self._event(EventLevel.NOTE, _scenario_note(progress.pr, report), progress.run.id)
             progress.reports.append(report)
             phase_reports.append(report)
         return await self._publish(progress, phase_reports, pending)
@@ -200,6 +206,9 @@ class Reviewer:
             self._store.runs.append_setup_log(run_id, str(error))
             raise
         self._store.runs.append_setup_log(run_id, workspace.log)
+        merge_base = workspace.merge_base[:_SHORT_COMMIT]
+        message = f"{_pr_label(pr)}: копия PR готова, merge-base {merge_base}"
+        self._event(EventLevel.DEBUG, message, run_id)
         return workspace
 
     async def _publish(
@@ -237,6 +246,8 @@ class Reviewer:
                 approve=progress.policy.approve,
             )
             self._store.runs.mark_published(run.id)
+            if self._store.watch.is_held(run.id) or overall_status(progress.reports) in _WATCHED:
+                self._event(EventLevel.NOTE, _watch_note(pr, progress.policy), run.id)
         return ""
 
     async def _snapshot(self, progress: "_Progress", fresh: PullRequest) -> TaskStates:
@@ -248,6 +259,10 @@ class Reviewer:
             counts=fresh.task_counts,
             slug=await self._api.current_slug(),
         )
+        if progress.states.dismissed:
+            tasks = ", ".join(f"#{task_id}" for task_id in progress.states.dismissed)
+            message = f"{_pr_label(progress.pr)}: таски закрыты вручную: {tasks}"
+            self._event(EventLevel.DEBUG, message, progress.run.id)
         return progress.states
 
     async def _withdraw(self, pr: PullRequest, run_id: int) -> None:
@@ -297,6 +312,29 @@ def review_order(scenarios: Sequence[Scenario]) -> tuple[Scenario, ...]:
 def _pr_label(pr: PullRequest) -> str:
     """``PROJECT/repo#id`` для журнала."""
     return f"{pr.project}/{pr.repo}#{pr.id}"
+
+
+def _scenario_note(pr: PullRequest, report: ScenarioReport) -> str:
+    """Итог сценария для журнала: исход, число тасок, длительность, начало ошибки."""
+    parts = [f"{report.outcome}"]
+    if report.tasks:
+        parts.append(f"тасок {len(report.tasks)}")
+    parts.append(f"за {round(report.duration)} с")
+    error_lines = report.error.strip().splitlines()
+    if error_lines:
+        parts.append(error_lines[0][:_ERROR_CHARS])
+    details = ", ".join(parts)
+    title = report.scenario.display_title
+    return f"{_pr_label(pr)}: сценарий {title}: {details}"
+
+
+def _watch_note(pr: PullRequest, policy: DaemonSettings) -> str:
+    """Подсказка в журнал: когда наблюдение снимет NEEDS_WORK (с действующей задержкой)."""
+    minutes = format(policy.resolve_delay_minutes, "g")
+    return (
+        f"{_pr_label(pr)}: наблюдение снимет «Требуются изменения», когда закроют все таски "
+        f"бота и ручные таски пользователя демона, а новых коммитов не будет {minutes} мин"
+    )
 
 
 def _record(report: ScenarioReport) -> ScenarioRecord:

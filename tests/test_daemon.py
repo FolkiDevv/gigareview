@@ -41,6 +41,26 @@ def test_poll_enqueues_configured_unreviewed_prs(tmp_path: Path, store: Store) -
     assert daemon.status().last_poll is not None
 
 
+def test_poll_summary_is_logged_when_it_changes(tmp_path: Path, store: Store) -> None:
+    api = FakeBitbucket(prs=[make_pr(1), make_pr(2, repo="unknown")])
+    daemon = _daemon(tmp_path, store, "unused", api)
+    asyncio.run(daemon.poll())
+    asyncio.run(daemon.poll())
+    debug = [event.message for event in store.events.list(EventLevel.DEBUG)]
+    assert "PROJ/repo#1: прогон #1 (queued, запуск: auto) — статус поставит он" in debug
+    summaries = [message for message in debug if message.startswith("Опрос")]
+    assert summaries == [
+        (
+            "Опрос Bitbucket: PR 2; вне конфигурации 1: PROJ/unknown (1); в очередь 0; "
+            "уже проверены или проверяются 1"
+        ),
+        (
+            "Опрос Bitbucket: PR 2; вне конфигурации 1: PROJ/unknown (1); в очередь 1; "
+            "уже проверены или проверяются 0"
+        ),
+    ]
+
+
 def test_poll_error_is_reported(tmp_path: Path, store: Store) -> None:
     api = FakeBitbucket(list_error=BitbucketError("down"))
     daemon = _daemon(tmp_path, store, "unused", api)

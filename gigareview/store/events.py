@@ -16,13 +16,31 @@ class EventRepository:
     def __init__(self, db: sqlite3.Connection) -> None:
         """Репозиторий поверх соединения ``db``."""
         self._db = db
+        self._last: dict[str, str] = {}
 
-    def add(self, level: EventLevel, message: str, run_id: int | None = None) -> None:
-        """Добавляет запись в журнал."""
+    def add(
+        self,
+        level: EventLevel,
+        message: str,
+        run_id: int | None = None,
+        *,
+        key: str = "",
+    ) -> None:
+        """Добавляет запись в журнал.
+
+        ``key`` — о чём запись (например, решение по одному PR): тот же текст по тому же ключу
+        подряд не повторяется, так опрос раз в минуту не засоряет журнал. Память — на процесс:
+        после перезапуска текущее состояние записывается ещё раз.
+        """
+        if key and self._last.get(key) == message:
+            return
         self._db.execute(
             "INSERT INTO events (created_at, level, message, run_id) VALUES (?, ?, ?, ?)",
             (stamp(), level.value, message, run_id),
         )
+        # После записи: сбой базы не должен помешать записать то же решение в следующий раз.
+        if key:
+            self._last[key] = message
 
     def list(
         self,

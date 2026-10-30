@@ -4,6 +4,8 @@ from dataclasses import replace
 from datetime import timedelta
 from pathlib import Path
 
+import pytest
+
 from gigareview.statuses import EventLevel, Outcome, RunStatus, Trigger
 from gigareview.store import (
     CommentKind,
@@ -194,6 +196,35 @@ def test_events(store: Store) -> None:
     assert [event.message for event in store.events.list(limit=1, offset=1)] == ["hello"]
 
 
+def test_keyed_events_are_not_repeated(store: Store) -> None:
+    store.events.add(EventLevel.DEBUG, "ждём", key="pr-1")
+    store.events.add(EventLevel.DEBUG, "ждём", key="pr-1")
+    store.events.add(EventLevel.DEBUG, "ждём", key="pr-2")
+    store.events.add(EventLevel.NOTE, "ждём")
+    store.events.add(EventLevel.NOTE, "ждём")
+    assert store.events.count() == 4
+    store.events.add(EventLevel.NOTE, "готово", key="pr-1")
+    store.events.add(EventLevel.DEBUG, "ждём", key="pr-1")
+    assert [event.message for event in store.events.list(limit=2)] == ["ждём", "готово"]
+    assert store.events.count(EventLevel.DEBUG) == 3
+
+
+def test_keyed_event_is_written_again_after_failed_insert(tmp_path: Path) -> None:
+    path = tmp_path / "gigareview.db"
+    with Store(path) as store, closing(sqlite3.connect(path)) as other:
+        other.execute(
+            "CREATE TRIGGER no_events BEFORE INSERT ON events "
+            "BEGIN SELECT RAISE(ABORT, 'full'); END",
+        )
+        other.commit()
+        with pytest.raises(sqlite3.IntegrityError):
+            store.events.add(EventLevel.NOTE, "ждём", key="pr-1")
+        other.execute("DROP TRIGGER no_events")
+        other.commit()
+        store.events.add(EventLevel.NOTE, "ждём", key="pr-1")
+        assert store.events.count() == 1
+
+
 def test_state(store: Store) -> None:
     assert not store.state.get("paused")
     assert store.state.get("paused", "no") == "no"
@@ -312,9 +343,15 @@ def test_watch_runs_queries(store: Store) -> None:
     store.runs.finish(first, RunStatus.ISSUES)
     store.runs.mark_published(first)
     second = store.runs.create(_new(commit="two"))
-    assert store.watch.has_active("PROJ", "repo", 1)
+    active = store.watch.active_run("PROJ", "repo", 1)
+    assert active is not None
+    assert active.id == second
     store.runs.finish(second, RunStatus.ERROR)
-    assert not store.watch.has_active("PROJ", "repo", 1)
+    assert store.watch.active_run("PROJ", "repo", 1) is None
+    latest = store.watch.latest_on_commit("PROJ", "repo", 1, "two")
+    assert latest is not None
+    assert (latest.id, latest.status) == (second, RunStatus.ERROR)
+    assert store.watch.latest_on_commit("PROJ", "repo", 1, "three") is None
     published = store.watch.last_published("PROJ", "repo", 1)
     assert published is not None
     assert published.id == first

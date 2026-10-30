@@ -19,6 +19,7 @@ _STATUS_LABELS: Mapping[str, str] = MappingProxyType({
     RunStatus.FAILED: "scenario failures",
     RunStatus.ERROR: "error",
     RunStatus.INTERRUPTED: "interrupted",
+    EventLevel.DEBUG: "debug",
     EventLevel.NOTE: "info",
     EventLevel.WARNING: "warning",
 })

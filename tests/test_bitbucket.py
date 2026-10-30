@@ -8,6 +8,7 @@ import pytest
 from fakes import make_pr, with_counts
 
 from gigareview.bitbucket import Anchor, BitbucketClient
+from gigareview.bitbucket.models import User
 from gigareview.errors import BitbucketError
 from gigareview.statuses import ReviewStatus
 
@@ -202,6 +203,18 @@ def test_list_tasks_error_on_any_page_fails() -> None:
 
     with pytest.raises(BitbucketError, match="HTTP 500"):
         _run(responder, lambda client: client.list_tasks(make_pr()))
+
+
+def test_user_matches_login_ignoring_case() -> None:
+    user = User(name="Ivan.Petrov", slug="ivan.petrov")
+    assert user.matches("IVAN.PETROV")
+    assert user.matches("Ivan.Petrov")
+    assert not user.matches("")
+    assert not User().matches("")
+    reviewers = [{"user": {"name": "Me", "slug": "me"}, "status": "NEEDS_WORK"}]
+    pr = make_pr().model_copy(update={"reviewers": ()})
+    pr = type(pr).model_validate({**pr.model_dump(by_alias=True), "reviewers": reviewers})
+    assert pr.reviewer_status("ME") == "NEEDS_WORK"
 
 
 def test_task_counts_from_properties() -> None:

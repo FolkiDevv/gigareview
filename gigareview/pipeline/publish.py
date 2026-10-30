@@ -2,6 +2,7 @@
 
 from collections.abc import Callable, Sequence
 from http import HTTPStatus
+from types import MappingProxyType
 
 from gigareview.bitbucket import Anchor, BitbucketApi, PullRequest
 from gigareview.errors import BitbucketError
@@ -11,6 +12,12 @@ from gigareview.statuses import EventLevel, Outcome, ReviewStatus, RunStatus
 from gigareview.store import CommentKind, Store, TaskDetails
 
 __all__ = ["Publisher", "review_decision", "withdraw_approval"]
+
+_REASONS = MappingProxyType({
+    ReviewStatus.NEEDS_WORK: "есть замечания",
+    ReviewStatus.APPROVED: "замечаний нет",
+    ReviewStatus.UNAPPROVED: "замечаний нет, approve = false — без одобрения",
+})
 
 
 def review_decision(
@@ -67,11 +74,14 @@ class Publisher:
     async def publish_tasks(self, pr: PullRequest, reports: Sequence[ScenarioReport]) -> None:
         """Таски сценариев ``reports``: их прошлые таски закрываются, новые публикуются."""
         names = {report.scenario.name for report in reports}
-        await self._resolve_previous(pr, reports, lambda scenario: scenario in names)
+        resolved = await self._resolve_previous(pr, reports, lambda scenario: scenario in names)
+        posted = 0
         for report in reports:
             if report.outcome is Outcome.ISSUES:
                 # Таски публикуются по порядку сценариев: так их и читают в PR.
-                await self._post_tasks(pr, report)  # noqa: WPS476
+                posted += await self._post_tasks(pr, report)  # noqa: WPS476
+        message = f"{_label(pr)}: таски этапа: опубликовано {posted}, закрыто прежних {resolved}"
+        self._store.events.add(EventLevel.DEBUG, message, self._run_id)
 
     async def finish(
         self,
@@ -96,12 +106,14 @@ class Publisher:
         review_status = review_decision(status, current, approve=approve)
         if review_status is not None:
             await self._api.set_review_status(pr, review_status)
+        note = _decision_note(status, current, review_status, self._states.manual if held else ())
+        self._store.events.add(EventLevel.NOTE, f"{_label(pr)}: {note}", self._run_id)
         if held:
             # После статуса: не поставленный статус не должен подменить наблюдение прогона.
             self._store.watch.hold(pr.project, pr.repo, pr.id, self._run_id)
 
-    async def _post_tasks(self, pr: PullRequest, report: ScenarioReport) -> None:
-        """Таски сценария с замечаниями."""
+    async def _post_tasks(self, pr: PullRequest, report: ScenarioReport) -> int:
+        """Таски сценария с замечаниями; возвращает, сколько опубликовано."""
         for task in report.tasks:
             anchor = None if task.path is None else Anchor(task.path, task.line)
             # Таски сценария — по порядку, как он их выдал.
@@ -119,14 +131,17 @@ class Publisher:
                 report.scenario.name,
                 TaskDetails(task.text, task.path, task.line),
             )
+        return len(report.tasks)
 
     async def _resolve_previous(
         self,
         pr: PullRequest,
         reports: Sequence[ScenarioReport],
         selected: Callable[[str], bool],
-    ) -> None:
-        """Закрывает открытые таски сценариев ``selected``; удалённая вручную — забыта.
+    ) -> int:
+        """Закрывает открытые таски сценариев ``selected``; возвращает, сколько закрыто.
+
+        Удалённая вручную таска — забыта.
 
         Таски инкрементальных сценариев остаются открытыми, кроме тех, что сценарий закрыл
         (``resolved``): он ревьюит только новые изменения и не повторяет прежние замечания.
@@ -135,6 +150,7 @@ class Publisher:
         incremental = [report for report in reports if report.scenario.incremental]
         kept = {report.scenario.name for report in incremental}
         resolved = {task_id for report in incremental for task_id in report.resolved}
+        closed = 0
         for record in self._store.comments.open_tasks(pr.project, pr.repo, pr.id):
             if not selected(record.scenario):
                 continue
@@ -156,3 +172,30 @@ class Publisher:
                     )
                     continue
             self._store.comments.mark_resolved(record.id)
+            closed += 1
+        return closed
+
+
+def _decision_note(
+    status: RunStatus,
+    current: str | None,
+    decision: ReviewStatus | None,
+    held: Sequence[int],
+) -> str:
+    """Решение по статусу ревью для журнала; ``held`` — ручные таски, придержавшие PR."""
+    was = current or "—"
+    tasks = ", ".join(f"#{task_id}" for task_id in held)
+    held_reason = f"открыта ручная таска пользователя демона {tasks}"
+    if decision is None:
+        if held:
+            return f"статус ревью не меняется: уже {was} ({held_reason})"
+        if status is RunStatus.FAILED:
+            return f"статус ревью не меняется ({was}): часть проверок не удалась"
+        return f"статус ревью не меняется: {was}"
+    reason = held_reason if held else _REASONS[decision]
+    return f"статус ревью: {was} → {decision} ({reason})"
+
+
+def _label(pr: PullRequest) -> str:
+    """``PROJECT/repo#id`` для журнала."""
+    return f"{pr.project}/{pr.repo}#{pr.id}"
