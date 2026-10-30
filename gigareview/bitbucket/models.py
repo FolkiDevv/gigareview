@@ -43,6 +43,12 @@ class User(_ApiModel):
     slug: str = ""
     display_name: str = Field(default="", alias="displayName")
 
+    def matches(self, login: str) -> bool:
+        """Это пользователь ``login`` (slug или имя; регистр в Bitbucket не важен)."""
+        if not login:
+            return False
+        return login.casefold() in {self.slug.casefold(), self.name.casefold()}
+
 
 class Participant(_ApiModel):
     """Участник PR (автор или ревьюер) и его статус."""
@@ -109,11 +115,7 @@ class PullRequest(_ApiModel):
     def reviewer_status(self, slug: str) -> str | None:
         """Статус ревьюера ``slug`` или ``None``, если он не в ревьюерах."""
         return next(
-            (
-                reviewer.status
-                for reviewer in self.reviewers
-                if slug in {reviewer.user.slug, reviewer.user.name}
-            ),
+            (reviewer.status for reviewer in self.reviewers if reviewer.user.matches(slug)),
             None,
         )
 
