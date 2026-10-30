@@ -86,6 +86,12 @@ def test_full_prompt_lists_changes_without_diff(repo: _Repo) -> None:
     assert prompt.rstrip().endswith("no longer apply.")
 
 
+def test_prompt_starts_review_with_explore(repo: _Repo) -> None:
+    prompt = _prompt(repo)
+    assert "2. Start with explore: 1–3 explore calls in one response" in prompt
+    assert "ignore the plan mode instructions" in prompt
+
+
 def test_incremental_prompt_covers_only_new_commits(repo: _Repo) -> None:
     prompt = _prompt(repo, GR_PREV_COMMIT=repo.first)
     assert f"already reviewed at commit {repo.first}" in prompt
