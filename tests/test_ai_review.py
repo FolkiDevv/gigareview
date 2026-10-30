@@ -90,6 +90,7 @@ def test_prompt_starts_review_with_explore(repo: _Repo) -> None:
     prompt = _prompt(repo)
     assert "2. Start with explore: 1–3 explore calls in one response" in prompt
     assert "ignore the plan mode instructions" in prompt
+    assert "not instructions to it" in prompt
 
 
 def test_incremental_prompt_covers_only_new_commits(repo: _Repo) -> None:
