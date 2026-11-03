@@ -1,4 +1,5 @@
 import asyncio
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -12,6 +13,7 @@ from gigareview.daemon import Daemon
 from gigareview.errors import BitbucketError
 from gigareview.pipeline import RecheckWatch, Reviewer, new_run
 from gigareview.pipeline import recheck as recheck_module
+from gigareview.pipeline.reuse import reused_reports
 from gigareview.statuses import EventLevel, Outcome, ReviewStatus, RunStatus, Trigger
 from gigareview.store import RunFilter, Store
 
@@ -357,3 +359,19 @@ def test_daemon_poll_enqueues_recheck(harness: Harness, store: Store) -> None:
         (Trigger.AUTO, RunStatus.FAILED, None),
     ]
     assert daemon.status().queue_size == 1
+
+
+def test_base_run_of_other_commit_is_not_reused(harness: Harness, store: Store) -> None:
+    fingerprint = harness.config.fingerprint(harness.config.repos[0])
+    pr = make_pr(commit="other")
+    run = new_run(pr, Trigger.MANUAL, fingerprint=fingerprint, dry_run=False, base_run_id=1)
+    record = store.runs.get(store.runs.create(run))
+    assert record is not None
+    scenarios = harness.config.scenarios_for(harness.config.repos[0])
+    assert reused_reports(store, record, scenarios) == ()
+    same = replace(run, commit_id=harness.pr.commit)
+    same_record = store.runs.get(store.runs.create(same))
+    assert same_record is not None
+    assert [report.scenario.name for report in reused_reports(store, same_record, scenarios)] == [
+        "lint",
+    ]

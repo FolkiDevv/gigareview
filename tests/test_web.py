@@ -11,7 +11,7 @@ from litestar.testing import TestClient
 from gigareview.daemon import Daemon
 from gigareview.pipeline import new_run
 from gigareview.statuses import EventLevel, Outcome, RunStatus, Trigger
-from gigareview.store import CommentKind, ScenarioRecord, Store
+from gigareview.store import CommentKind, RunFilter, ScenarioRecord, Store
 from gigareview.web import create_app
 from gigareview.web.auth import TokenGuard
 
@@ -401,3 +401,39 @@ def test_run_page_shows_recheck_and_reused_scenarios(tmp_path: Path, store: Stor
     # Копия PR ещё готовится: перенесённый итог не значит, что сценарии пошли.
     assert page.count('class="scenario o-queued"') == 1
     assert "o-running" not in page
+
+
+def test_rerun_failed_action(client: Client, store: Store) -> None:
+    run_id = _seed(store)
+    page = client.get(f"/runs/{run_id}").text
+    assert "/rerun-failed" not in page
+    failed = ScenarioRecord("review", "ИИ-ревью", "ai", Outcome.ERROR, None, "", 1.0)
+    store.runs.add_scenario(run_id, 1, failed)
+    page = client.get(f"/runs/{run_id}").text
+    assert f'action="/runs/{run_id}/rerun-failed"' in page
+    assert "Re-run failed" in page
+    headers = _csrf(client)
+    url = f"/runs/{run_id}/rerun-failed"
+    response = client.post(url, headers=headers, follow_redirects=False)
+    match = re.match(r"/runs/(\d+)\?notice=", response.headers["location"])
+    assert match is not None
+    rerun = store.runs.get(int(match.group(1)))
+    assert rerun is not None
+    assert rerun.trigger is Trigger.MANUAL
+    assert rerun.base_run_id == run_id
+    missing = client.post("/runs/999/rerun-failed", headers=headers, follow_redirects=False)
+    assert "error=" in missing.headers["location"]
+
+
+def test_rerun_failed_of_old_commit_is_refused(
+    client: Client,
+    store: Store,
+    api: FakeBitbucket,
+) -> None:
+    run_id = _seed(store)
+    api.prs = [make_pr(1, commit="newer")]
+    headers = _csrf(client)
+    url = f"/runs/{run_id}/rerun-failed"
+    response = client.post(url, headers=headers, follow_redirects=False)
+    assert "error=" in response.headers["location"]
+    assert len(store.queries.runs(RunFilter())) == 1

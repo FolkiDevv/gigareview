@@ -171,12 +171,30 @@ class Daemon:
         self._event(EventLevel.NOTE, f"{repo.key}#{pr.id} поставлен в очередь ({trigger})", run_id)
         return run_id
 
-    async def rerun(self, project: str, repo: str, pr_id: int) -> int:
-        """Повторяет проверку PR на его текущем коммите (кнопка в Web Dashboard)."""
+    async def rerun(
+        self,
+        project: str,
+        repo: str,
+        pr_id: int,
+        *,
+        base_run_id: int | None = None,
+    ) -> int:
+        """Повторяет проверку PR на его текущем коммите (кнопки в Web Dashboard).
+
+        ``base_run_id`` — повторить только упавшие сценарии этого прогона, перенеся итоги
+        остальных; прогон должен относиться к текущему коммиту PR.
+        """
         pr = await self._api.get_pull_request(project, repo, pr_id)
         if pr.state != "OPEN":
             raise GigaReviewError(f"{project}/{repo}#{pr_id} уже не открыт ({pr.state})")
-        return self.enqueue(pr, Trigger.MANUAL)
+        if base_run_id is not None:
+            base = self._store.runs.get(base_run_id)
+            if base is None or base.commit_id != pr.commit:
+                raise GigaReviewError(
+                    f"Прогон #{base_run_id} проверял не текущий коммит PR — повторите проверку "
+                    "целиком",
+                )
+        return self.enqueue(pr, Trigger.MANUAL, base_run_id=base_run_id)
 
     async def wait_idle(self) -> None:
         """Ждёт, пока очередь опустеет и все взятые прогоны завершатся."""

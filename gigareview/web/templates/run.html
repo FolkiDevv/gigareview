@@ -13,6 +13,9 @@
       </div>
     </div>
     <div class="actions">
+      {% if run.status not in ("queued", "running") and scenarios | selectattr("outcome", "equalto", "error") | list %}
+      {{ action("/runs/" ~ run.id ~ "/rerun-failed", "Re-run failed", csrf_input) }}
+      {% endif %}
       {{ action("/runs/" ~ run.id ~ "/rerun", "Re-run check", csrf_input, "primary") }}
     </div>
   </section>

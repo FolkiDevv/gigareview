@@ -19,13 +19,15 @@ def reused_reports(
     """Итоги сценариев, которые прогон ``run`` берёт из базового прогона без выполнения.
 
     Переносятся сценарии, отработавшие без ошибки. Пусто — выполняются все сценарии: прогон
-    не перезапуск, базовый прогон не опубликован (упал целиком), конфигурация сценариев
-    изменилась или упавших сценариев нет.
+    не перезапуск, базовый прогон не опубликован (упал целиком) или проверял другой коммит,
+    конфигурация сценариев изменилась или упавших сценариев нет.
     """
     if run.base_run_id is None:
         return ()
     base = store.runs.get(run.base_run_id)
-    if base is None or not base.published or base.fingerprint != run.fingerprint:
+    if base is None or not base.published or base.commit_id != run.commit_id:
+        return ()
+    if base.fingerprint != run.fingerprint:
         return ()
     known = {scenario.name: scenario for scenario in scenarios}
     reports = tuple(

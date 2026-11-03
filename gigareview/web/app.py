@@ -59,6 +59,7 @@ def create_app(daemon: Daemon, store: Store, *, csrf_secret: str = "") -> Litest
             actions.resume,
             actions.reload_config,
             actions.rerun_run,
+            actions.rerun_failed,
             actions.rerun_pr,
             create_static_files_router(path="/static", directories=[_HERE / "static"]),
         ],
