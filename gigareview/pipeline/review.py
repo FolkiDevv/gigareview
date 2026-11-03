@@ -259,14 +259,14 @@ class Reviewer:
     ) -> str:
         """Таски этапа и статусный комментарий; после последнего этапа — статус ревью.
 
-        Публикуется, только пока PR открыт на том же коммите; иначе — примечание, и
-        оставшиеся этапы не выполняются: новый коммит проверит следующий прогон.
+        Публикуется, только пока PR открыт на том же коммите и с той же целевой веткой; иначе —
+        примечание, и оставшиеся этапы не выполняются: итоги посчитаны не для этого PR.
         """
         run, pr = progress.run, progress.pr
         if run.dry_run:
             return ""
         fresh = await self._api.get_pull_request(pr.project, pr.repo, pr.id)
-        if fresh.state != "OPEN" or fresh.commit != pr.commit:
+        if _changed(pr, fresh):
             note = _CHANGED_NOTE
             if pending:
                 note = f"{note}, оставшиеся сценарии не запускались"
@@ -356,6 +356,13 @@ def _remaining(
 def review_order(scenarios: Sequence[Scenario]) -> tuple[Scenario, ...]:
     """Сценарии в порядке выполнения прогоном (этапы друг за другом)."""
     return tuple(chain.from_iterable(_phases(scenarios)))
+
+
+def _changed(pr: PullRequest, fresh: PullRequest) -> bool:
+    """PR закрыли, в него пришёл новый коммит или сменили целевую ветку (MERGE_BASE и дифф)."""
+    if fresh.state != "OPEN" or fresh.commit != pr.commit:
+        return True
+    return fresh.to_ref.display_id != pr.to_ref.display_id
 
 
 def _pr_label(pr: PullRequest) -> str:

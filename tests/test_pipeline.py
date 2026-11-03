@@ -212,6 +212,18 @@ def test_pr_changed_during_run_is_not_published(
     assert not run.published
 
 
+def test_pr_retargeted_during_run_is_not_published(
+    tmp_path: Path,
+    store: Store,
+    origin: Origin,
+) -> None:
+    api = FakeBitbucket(overrides={1: make_pr(commit=origin.feature, target="release")})
+    run, api = _review(tmp_path, store, origin, api=api)
+    assert "не опубликованы" in run.error
+    assert api.statuses == []
+    assert not run.published
+
+
 def test_scenario_environment(
     tmp_path: Path,
     store: Store,
