@@ -18,7 +18,8 @@ def reused_reports(
 ) -> tuple[ScenarioReport, ...]:
     """Итоги сценариев, которые прогон ``run`` берёт из базового прогона без выполнения.
 
-    Переносятся сценарии, отработавшие без ошибки. Пусто — выполняются все сценарии: прогон
+    Переносятся сценарии, отработавшие без ошибки и до конца: прерванное ревью (``partial``)
+    проверило не всё и выполняется заново. Пусто — выполняются все сценарии: прогон
     не перезапуск, базовый прогон не опубликован (упал целиком) или проверял другой коммит,
     конфигурация сценариев изменилась или упавших сценариев нет.
     """
@@ -33,9 +34,14 @@ def reused_reports(
     reports = tuple(
         _report(known[record.name], record, base.id)
         for record in store.runs.scenarios(base.id)
-        if record.name in known and record.outcome is not Outcome.ERROR
+        if record.name in known and _settled(record)
     )
     return () if len(reports) == len(known) else reports
+
+
+def _settled(record: ScenarioRecord) -> bool:
+    """Итог сценария окончательный: без ошибки и ревью не прервано."""
+    return record.outcome is not Outcome.ERROR and not record.partial
 
 
 def _report(scenario: Scenario, record: ScenarioRecord, base_id: int) -> ScenarioReport:

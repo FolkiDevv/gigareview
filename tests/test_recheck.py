@@ -15,7 +15,7 @@ from gigareview.pipeline import RecheckWatch, Reviewer, new_run
 from gigareview.pipeline import recheck as recheck_module
 from gigareview.pipeline.reuse import reused_reports
 from gigareview.statuses import EventLevel, Outcome, ReviewStatus, RunStatus, Trigger
-from gigareview.store import RunFilter, Store
+from gigareview.store import RunFilter, ScenarioRecord, Store
 
 _TASKS = '{"tasks": [{"text": "one"}]}'
 
@@ -375,3 +375,20 @@ def test_base_run_of_other_commit_is_not_reused(harness: Harness, store: Store) 
     assert [report.scenario.name for report in reused_reports(store, same_record, scenarios)] == [
         "lint",
     ]
+
+
+def test_partial_review_is_not_reused(harness: Harness, store: Store) -> None:
+    pr = harness.pr
+    base = store.runs.create(new_run(pr, Trigger.AUTO, fingerprint="fp", dry_run=False))
+    for position, (name, outcome, partial) in enumerate((
+        ("lint", Outcome.PASSED, False),
+        ("ai", Outcome.ISSUES, True),
+    )):
+        record = ScenarioRecord(name, name, "simple", outcome, 0, "", 1.0, partial=partial)
+        store.runs.add_scenario(base, position, record)
+    store.runs.mark_published(base)
+    rerun = new_run(pr, Trigger.RECHECK, fingerprint="fp", dry_run=False, base_run_id=base)
+    run = store.runs.get(store.runs.create(rerun))
+    assert run is not None
+    scenarios = harness.config.scenarios_for(harness.config.repos[0])
+    assert [report.scenario.name for report in reused_reports(store, run, scenarios)] == ["lint"]

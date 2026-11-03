@@ -11,7 +11,7 @@ from gigareview.bitbucket import BitbucketApi, PullRequest
 from gigareview.config import Config, load_config
 from gigareview.errors import GigaReviewError
 from gigareview.pipeline import RecheckWatch, Reviewer, TaskWatch, new_run
-from gigareview.statuses import EventLevel, Trigger
+from gigareview.statuses import EventLevel, RunStatus, Trigger
 from gigareview.store import Store
 from gigareview.store.clock import stamp, utc_now
 
@@ -194,6 +194,9 @@ class Daemon:
                     f"Прогон #{base_run_id} проверял не текущий коммит PR — повторите проверку "
                     "целиком",
                 )
+            crashed = base.status in {RunStatus.ERROR, RunStatus.INTERRUPTED}
+            if not crashed and not self._store.runs.has_errors(base_run_id):
+                raise GigaReviewError(f"В прогоне #{base_run_id} нет упавших сценариев")
         return self.enqueue(pr, Trigger.MANUAL, base_run_id=base_run_id)
 
     async def wait_idle(self) -> None:

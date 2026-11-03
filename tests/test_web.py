@@ -437,3 +437,12 @@ def test_rerun_failed_of_old_commit_is_refused(
     response = client.post(url, headers=headers, follow_redirects=False)
     assert "error=" in response.headers["location"]
     assert len(store.queries.runs(RunFilter())) == 1
+
+
+def test_rerun_failed_without_failures_is_refused(client: Client, store: Store) -> None:
+    run_id = _seed(store)
+    headers = _csrf(client)
+    url = f"/runs/{run_id}/rerun-failed"
+    response = client.post(url, headers=headers, follow_redirects=False)
+    assert "error=" in response.headers["location"]
+    assert len(store.queries.runs(RunFilter())) == 1
