@@ -405,3 +405,24 @@ def test_config_reloaded_while_queued_reruns_everything(harness: Harness, store:
     harness.finish_queued()
     assert _lines(harness.lint_log) == 2
     assert all(record.reused_from is None for record in store.runs.scenarios(harness.queued[0]))
+
+
+def test_other_target_branch_is_not_reused(harness: Harness, store: Store) -> None:
+    fingerprint = harness.config.fingerprint(harness.config.repos[0])
+    retargeted = make_pr(commit=harness.pr.commit, target="release")
+    rerun = new_run(retargeted, Trigger.RECHECK, fingerprint=fingerprint, dry_run=False)
+    run = store.runs.get(store.runs.create(replace(rerun, base_run_id=1)))
+    assert run is not None
+    scenarios = harness.config.scenarios_for(harness.config.repos[0])
+    assert reused_reports(store, run, scenarios, fingerprint=fingerprint) == ()
+
+
+def test_run_records_fingerprint_it_ran_with(harness: Harness, store: Store) -> None:
+    harness.reply()
+    harness.check()
+    lint = harness.config.scenarios["lint"]
+    harness.config.scenarios["lint"] = lint.model_copy(update={"run": f"{lint.run}; true"})
+    harness.finish_queued()
+    run = store.runs.get(harness.queued[0])
+    assert run is not None
+    assert run.fingerprint == harness.config.fingerprint(harness.config.repos[0])

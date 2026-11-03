@@ -30,6 +30,8 @@ _WATCHED = frozenset((RunStatus.ISSUES, RunStatus.FAILED))
 #: Сколько символов ошибки сценария показывать в журнале (полная — на странице прогона).
 _ERROR_CHARS = 200
 _SHORT_COMMIT = 10
+#: Этапы прогона: сценарии каждого этапа по порядку.
+type _Phases = list[tuple[Scenario, ...]]
 
 
 def new_run(
@@ -90,13 +92,7 @@ class Reviewer:
         repo = self.config.find_repo(pr.project, pr.repo)
         if run is None or repo is None:
             raise SetupError(f"Репозиторий {pr.project}/{pr.repo} не описан в конфигурации")
-        reused = reused_reports(
-            self._store,
-            run,
-            self.config.scenarios_for(repo),
-            fingerprint=self.config.fingerprint(repo),
-        )
-        phases = _phases(_remaining(self.config.scenarios_for(repo), reused))
+        phases, reused = self._plan(run, repo)
         if not phases:
             raise SetupError(f"Для {repo.key} не задано ни одного сценария")
         if not run.dry_run:
@@ -131,6 +127,22 @@ class Reviewer:
                 await board.fail(pr)
                 raise
         return overall_status(progress.reports), note
+
+    def _plan(
+        self,
+        run: RunRecord,
+        repo: RepoConfig,
+    ) -> tuple[_Phases, tuple[ScenarioReport, ...]]:
+        """Этапы прогона и итоги, перенесённые из базового прогона.
+
+        Отпечаток конфигурации, с которой прогон выполняется, записывается в прогон: её могли
+        перечитать, пока он ждал очереди, а следующий перезапуск сверяет итоги по отпечатку.
+        """
+        scenarios = self.config.scenarios_for(repo)
+        fingerprint = self.config.fingerprint(repo)
+        self._store.runs.set_fingerprint(run.id, fingerprint)
+        reused = reused_reports(self._store, run, scenarios, fingerprint=fingerprint)
+        return _phases(_remaining(scenarios, reused)), reused
 
     def _reuse(self, progress: "_Progress", reused: Sequence[ScenarioReport]) -> None:
         """Итоги сценариев, перенесённые из базового прогона, — в базу и в итоги прогона."""
@@ -325,7 +337,7 @@ class _Progress:
     states: TaskStates | None = None
 
 
-def _phases(scenarios: Sequence[Scenario]) -> list[tuple[Scenario, ...]]:
+def _phases(scenarios: Sequence[Scenario]) -> _Phases:
     """Этапы прогона: сначала обычные сценарии, затем долгие ИИ-сценарии."""
     simple = tuple(scenario for scenario in scenarios if scenario.kind is ScenarioKind.SIMPLE)
     smart = tuple(scenario for scenario in scenarios if scenario.kind is ScenarioKind.AI)

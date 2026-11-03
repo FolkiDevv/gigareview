@@ -52,6 +52,10 @@ class RunRepository:
             (RunStatus.RUNNING.value, stamp(), run_id),
         )
 
+    def set_fingerprint(self, run_id: int, fingerprint: str) -> None:
+        """Отпечаток конфигурации, с которой прогон выполняется на самом деле."""
+        self._db.execute("UPDATE runs SET fingerprint = ? WHERE id = ?", (fingerprint, run_id))
+
     def append_setup_log(self, run_id: int, text: str) -> None:
         """Дописывает вывод подготовки (git, init) в журнал прогона."""
         self._db.execute(

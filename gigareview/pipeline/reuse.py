@@ -25,13 +25,17 @@ def reused_reports(
 
     Переносятся сценарии, отработавшие без ошибки и до конца: прерванное ревью (``partial``)
     проверило не всё и выполняется заново. Пусто — выполняются все сценарии: прогон
-    не перезапуск, базовый прогон не опубликован (упал целиком) или проверял другой коммит,
+    не перезапуск, базовый прогон не опубликован (упал целиком), проверял другой коммит или
+    другую целевую ветку,
     конфигурация сценариев изменилась или упавших сценариев нет.
     """
     if run.base_run_id is None:
         return ()
     base = store.runs.get(run.base_run_id)
     if base is None or not base.published or base.commit_id != run.commit_id:
+        return ()
+    # Другая целевая ветка — другие MERGE_BASE и дифф: прежние итоги к ней не относятся.
+    if base.target_branch != run.target_branch:
         return ()
     if not base.fingerprint == run.fingerprint == fingerprint:
         return ()
