@@ -10,7 +10,7 @@ from pathlib import Path
 from gigareview.bitbucket import BitbucketApi, PullRequest
 from gigareview.config import Config, load_config
 from gigareview.errors import GigaReviewError
-from gigareview.pipeline import Reviewer, TaskWatch, new_run
+from gigareview.pipeline import RecheckWatch, Reviewer, TaskWatch, new_run
 from gigareview.statuses import EventLevel, Trigger
 from gigareview.store import Store
 from gigareview.store.clock import stamp, utc_now
@@ -62,6 +62,7 @@ class Daemon:
         self._config_path = config_path
         self._reviewer = Reviewer(config, store, api)
         self._watch = TaskWatch(store, api)
+        self._recheck = RecheckWatch(store, api)
         self._queue: asyncio.Queue[_Job] = asyncio.Queue()
         self._wake = asyncio.Event()
         self._tasks: list[asyncio.Task[None]] = []
@@ -96,7 +97,8 @@ class Daemon:
     async def poll(self) -> int:
         """Забирает PR из Bitbucket и ставит в очередь непроверенные коммиты; сколько поставлено.
 
-        PR без нового коммита — наблюдению: не закрыли ли вручную все таски демона.
+        PR без нового коммита — наблюдению: не закрыли ли вручную все таски демона, и сверке
+        ответов «/recheck»: не просят ли перезапустить упавшие сценарии.
         """
         try:
             prs = await self._api.list_review_prs()
@@ -131,6 +133,11 @@ class Daemon:
             key=_POLL_KEY,
         )
         await self._watch.check(skipped, self.config)
+        await self._recheck.check(
+            skipped,
+            self.config,
+            lambda target, base: self.enqueue(target, Trigger.RECHECK, base_run_id=base),
+        )
         return queued
 
     def poll_now(self) -> None:
@@ -144,8 +151,11 @@ class Daemon:
         if not paused:
             self._wake.set()
 
-    def enqueue(self, pr: PullRequest, trigger: Trigger) -> int:
-        """Ставит прогон ``pr`` в очередь; репозиторий должен быть описан в конфигурации."""
+    def enqueue(self, pr: PullRequest, trigger: Trigger, *, base_run_id: int | None = None) -> int:
+        """Ставит прогон ``pr`` в очередь; репозиторий должен быть описан в конфигурации.
+
+        ``base_run_id`` — прогон, упавшие сценарии которого повторяются (остальные переносятся).
+        """
         repo = self.config.find_repo(pr.project, pr.repo)
         if repo is None:
             raise GigaReviewError(f"Репозиторий {pr.project}/{pr.repo} не описан в конфигурации")
@@ -154,6 +164,7 @@ class Daemon:
             trigger,
             fingerprint=self.config.fingerprint(repo),
             dry_run=self.config.daemon.dry_run,
+            base_run_id=base_run_id,
         )
         run_id = self._store.runs.create(run)
         self._queue.put_nowait(_Job(run_id, pr))

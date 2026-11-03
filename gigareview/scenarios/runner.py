@@ -36,7 +36,8 @@ class ScenarioReport:
 
     ``resolved`` — прошлые таски, которые инкрементальный сценарий считает закрытыми;
     ``kept`` — сколько его прошлых тасок остаются открытыми (считает пайплайн);
-    ``partial`` — ревью прервано и проверило не всё.
+    ``partial`` — ревью прервано и проверило не всё; ``reused_from`` — сценарий не
+    выполнялся, итог перенесён из этого прогона (перезапуск только упавших сценариев).
     """
 
     scenario: Scenario
@@ -50,6 +51,7 @@ class ScenarioReport:
     resolved: tuple[int, ...] = ()
     kept: int = 0
     partial: bool = False
+    reused_from: int | None = None
 
 
 @dataclass(slots=True)

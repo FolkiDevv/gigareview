@@ -236,3 +236,11 @@ def test_resolve_delay_setting() -> None:
     assert _config(daemon={"resolve_delay_minutes": 1.5}).daemon.resolve_delay_seconds == 90
     with pytest.raises(ValueError, match="greater than or equal"):
         _config(daemon={"resolve_delay_minutes": -1})
+
+
+def test_max_rechecks_setting() -> None:
+    assert _config().daemon.max_rechecks == 3
+    assert _config(daemon={"max_rechecks": 0}).daemon.max_rechecks == 0
+    with pytest.raises(ValueError, match="greater than or equal"):
+        _config(daemon={"max_rechecks": -1})
+    assert Config.model_validate(tomllib.loads(SAMPLE_CONFIG)).daemon.max_rechecks == 3

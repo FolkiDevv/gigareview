@@ -11,7 +11,14 @@ from http import HTTPStatus
 from gigareview.bitbucket import BitbucketApi, Comment, PullRequest
 from gigareview.config import DaemonSettings, Scenario
 from gigareview.errors import BitbucketError
-from gigareview.scenarios import ScenarioReport, crash_text, summary_table, summary_text
+from gigareview.scenarios import (
+    ScenarioReport,
+    crash_text,
+    recheck_hint,
+    summary_table,
+    summary_text,
+)
+from gigareview.statuses import Outcome
 from gigareview.store import CommentKind, RunRecord, Store, TaskDetails
 
 __all__ = ["StatusBoard", "rewrite_summary"]
@@ -87,6 +94,7 @@ class StatusBoard:
             run_url=self._run_url,
             pending=pending,
             policy=policy,
+            hint=self._hint() if _failed(reports) else "",
         )
         await self._write(pr, text, summary_table(reports, commit=pr.commit, pending=pending))
 
@@ -98,8 +106,19 @@ class StatusBoard:
         if self._comment is None:
             return
         with contextlib.suppress(BitbucketError):
-            text = crash_text(commit=pr.commit, run_url=self._run_url, policy=self._policy)
+            text = crash_text(
+                commit=pr.commit,
+                run_url=self._run_url,
+                policy=self._policy,
+                hint=self._hint(),
+            )
             await self._write(pr, text, "")
+
+    def _hint(self) -> str:
+        """Как перезапустить упавшие сценарии коммита и сколько перезапусков осталось."""
+        run = self._run
+        used = self._store.runs.count_rechecks(run.project, run.repo, run.pr_id, run.commit_id)
+        return recheck_hint(self._policy, used)
 
     async def _write(self, pr: PullRequest, text: str, table: str) -> None:
         """Первая запись прогона обновляет комментарий PR прошлых прогонов или создаёт его.
@@ -141,3 +160,8 @@ class StatusBoard:
                 if error.status_code != HTTPStatus.NOT_FOUND:
                     raise
         return await self._api.add_comment(pr, text)
+
+
+def _failed(reports: Sequence[ScenarioReport]) -> bool:
+    """Какой-то сценарий завершился некорректно (код 2, таймаут, неразборчивый вывод)."""
+    return any(report.outcome is Outcome.ERROR for report in reports)

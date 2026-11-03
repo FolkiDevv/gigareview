@@ -382,3 +382,22 @@ def test_templates_load_nothing_external_but_fonts() -> None:
     for template in TEMPLATES.glob("*.html"):
         hosts = {match.group(2) for match in external.finditer(template.read_text())}
         assert hosts <= {"fonts.googleapis.com", "fonts.gstatic.com"}, template.name
+
+
+def test_run_page_shows_recheck_and_reused_scenarios(tmp_path: Path, store: Store) -> None:
+    scenarios = {"lint": {"run": "true"}, "review": {"run": "true", "kind": "ai"}}
+    config = make_config(tmp_path / "home", "unused", scenarios=scenarios)
+    app = create_app(Daemon(config, store, FakeBitbucket()), store, csrf_secret="test")
+    base = store.runs.create(new_run(make_pr(1), Trigger.AUTO, fingerprint="fp", dry_run=False))
+    run = new_run(make_pr(1), Trigger.RECHECK, fingerprint="fp", dry_run=False, base_run_id=base)
+    run_id = store.runs.create(run)
+    store.runs.mark_running(run_id)
+    reused = ScenarioRecord("lint", "lint", "simple", Outcome.PASSED, 0, "", 1.0, reused_from=base)
+    store.runs.add_scenario(run_id, 0, reused)
+    with TestClient(app=app) as test_client:
+        page = test_client.get(f"/runs/{run_id}").text
+    assert f'failed scenarios of <a href="/runs/{base}">#{base}</a>' in page
+    assert f'not rerun, result of <a href="/runs/{base}">#{base}</a>' in page
+    # Копия PR ещё готовится: перенесённый итог не значит, что сценарии пошли.
+    assert page.count('class="scenario o-queued"') == 1
+    assert "o-running" not in page

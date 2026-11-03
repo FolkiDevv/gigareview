@@ -23,8 +23,8 @@ from gigareview.config import Config
 from gigareview.errors import GigaReviewError
 from gigareview.pipeline.status import rewrite_summary
 from gigareview.pipeline.tracking import TaskStates, fetch_task_states
-from gigareview.scenarios import settled_text
-from gigareview.statuses import EventLevel, Outcome, ReviewStatus, RunStatus
+from gigareview.scenarios import recheck_hint, settled_text
+from gigareview.statuses import EventLevel, ReviewStatus, RunStatus
 from gigareview.store import RunRecord, Store, TaskWatchRecord
 from gigareview.store.clock import clock_time, utc_now
 
@@ -128,7 +128,7 @@ class TaskWatch:
             message = (
                 f"прогон #{latest.id} коммита {latest.short_commit} — {latest.status}, итоги не "
                 "опубликованы: коммит автоматически больше не проверяется, повторить — Re-run "
-                "в Web Dashboard"
+                "в Web Dashboard или ответ «/recheck» на статусный комментарий"
             )
             self._note(pr, EventLevel.WARNING, message, latest.id)
 
@@ -213,10 +213,7 @@ class TaskWatch:
 
     def _target(self, run: RunRecord, config: Config) -> ReviewStatus:
         """APPROVED, если можно одобрять и все проверки прогона отработали; иначе UNAPPROVED."""
-        failed = any(
-            record.outcome is Outcome.ERROR for record in self._store.runs.scenarios(run.id)
-        )
-        if config.daemon.approve and not failed:
+        if config.daemon.approve and not self._store.runs.has_errors(run.id):
             return ReviewStatus.APPROVED
         return ReviewStatus.UNAPPROVED
 
@@ -243,13 +240,20 @@ class TaskWatch:
         self._note(pr, EventLevel.NOTE, _EVENTS[target], run.id)
         base_url = config.dashboard.base_url
         run_url = f"{base_url}/runs/{run.id}"
+        hint = _hint(self._store, run, config)
         try:
             await rewrite_summary(
                 self._api,
                 self._store,
                 fresh,
                 run.id,
-                lambda table: settled_text(table, target, run_url=run_url, policy=config.daemon),
+                lambda table: settled_text(
+                    table,
+                    target,
+                    run_url=run_url,
+                    policy=config.daemon,
+                    hint=hint,
+                ),
             )
         # Статус уже поставлен: устаревший итог комментария — не повод повторять.
         except GigaReviewError as error:
@@ -291,6 +295,14 @@ class TaskWatch:
     def _event(self, pr: PullRequest, level: EventLevel, message: str, run_id: int) -> None:
         """Разовое событие по PR."""
         self._store.events.add(level, f"{_label(pr)}: {message}", run_id)
+
+
+def _hint(store: Store, run: RunRecord, config: Config) -> str:
+    """Подсказка о перезапуске упавших сценариев для переписанного итога; пусто — не нужна."""
+    if not store.runs.has_errors(run.id):
+        return ""
+    used = store.runs.count_rechecks(run.project, run.repo, run.pr_id, run.commit_id)
+    return recheck_hint(config.daemon, used)
 
 
 def _due(

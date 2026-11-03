@@ -17,7 +17,13 @@ from gigareview.scenarios import (
     task_text,
 )
 from gigareview.scenarios import report as report_module
-from gigareview.scenarios.report import crash_text, guide_text, settled_text, summary_table
+from gigareview.scenarios.report import (
+    crash_text,
+    guide_text,
+    recheck_hint,
+    settled_text,
+    summary_table,
+)
 from gigareview.scenarios.tasks import parse_review
 from gigareview.statuses import Outcome, ReviewStatus, RunStatus
 
@@ -364,3 +370,32 @@ def test_settled_text() -> None:
     assert "закрыты вручную — статус «Требуются изменения» снят\n" in lifted
     reopened = settled_text("", ReviewStatus.NEEDS_WORK, run_url="", policy=policy)
     assert reopened.startswith("Итог: ❌ есть замечания")
+
+
+def test_recheck_hint_counts_left_and_limit() -> None:
+    policy = DaemonSettings(max_rechecks=3)
+    hint = recheck_hint(policy, 1)
+    assert "`/recheck`" in hint
+    assert "осталось перезапусков: 2 из 3" in hint
+    assert "исчерпан (3)" in recheck_hint(policy, 3)
+    assert not recheck_hint(DaemonSettings(max_rechecks=0), 0)
+
+
+def test_hint_follows_result_and_guide_mentions_recheck() -> None:
+    reports = [_report(Outcome.ERROR)]
+    text = summary_text(reports, commit="c", run_url="u", hint="HINT")
+    assert text.index("Итог:") < text.index("HINT") < text.index("[Подробности прогона]")
+    scenario = _scenario(run="x", kind="ai", title="ИИ")
+    pending = summary_text(reports, commit="c", run_url="", pending=[scenario], hint="HINT")
+    assert "HINT" not in pending
+    assert "HINT" in crash_text(commit="c", run_url="", hint="HINT")
+    policy = DaemonSettings()
+    settled = settled_text("", ReviewStatus.UNAPPROVED, run_url="", policy=policy, hint="HINT")
+    assert "HINT" in settled
+    assert "`/recheck`" in guide_text(DaemonSettings())
+    assert "/recheck" not in guide_text(DaemonSettings(max_rechecks=0))
+
+
+def test_reused_result_names_its_run() -> None:
+    text = summary_table([_report(Outcome.ISSUES, tasks=(Task("a"),), reused_from=7)], commit="c")
+    assert "| Проверка | ❌ замечания: 1 (из прогона #7) |" in text

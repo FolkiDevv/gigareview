@@ -20,7 +20,7 @@
   <section class="cards">
     <div class="card"><div class="label">Branches</div><div class="mono">{{ run.source_branch }} → {{ run.target_branch }}</div></div>
     <div class="card"><div class="label">Commit</div><div class="mono">{{ run.commit_id }}</div></div>
-    <div class="card"><div class="label">Trigger</div><div>{{ run.trigger }} · {{ run.created_at | when }}</div></div>
+    <div class="card"><div class="label">Trigger</div><div>{{ run.trigger }} · {{ run.created_at | when }}{% if run.base_run_id %} · failed scenarios of <a href="/runs/{{ run.base_run_id }}">#{{ run.base_run_id }}</a>{% endif %}</div></div>
     <div class="card"><div class="label">Duration</div><div>{{ run.duration | duration }}</div><div class="muted small">{{ run.started_at | when }} — {{ run.finished_at | when }}</div></div>
   </section>
 
@@ -40,6 +40,7 @@
       <strong>{{ scenario.title }}</strong> <span class="muted mono small">{{ scenario.name }} · {{ scenario.kind }}</span>
       {{ badge(scenario.outcome) }}
       <span class="muted small">{{ scenario.duration | duration }}</span>
+      {% if scenario.reused_from %}<span class="muted small">· not rerun, result of <a href="/runs/{{ scenario.reused_from }}">#{{ scenario.reused_from }}</a></span>{% endif %}
     </header>
     <div class="codes small">
       run: <b>{{ scenario.run_exit if scenario.run_exit is not none else "timeout" }}</b>

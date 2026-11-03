@@ -608,7 +608,8 @@ def test_exhausted_commit_is_warned(
     assert warnings == [
         (
             f"PROJ/repo#1: прогон #{failed} коммита new — error, итоги не опубликованы: коммит "
-            "автоматически больше не проверяется, повторить — Re-run в Web Dashboard"
+            "автоматически больше не проверяется, повторить — Re-run в Web Dashboard или ответ "
+            "«/recheck» на статусный комментарий"
         ),
     ]
 

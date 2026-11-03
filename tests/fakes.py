@@ -2,6 +2,7 @@
 
 import asyncio
 import os
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from types import MappingProxyType, TracebackType
@@ -67,6 +68,12 @@ def with_counts(pr: PullRequest, opened: int, resolved: int) -> PullRequest:
     return PullRequest.model_validate({**pr.model_dump(by_alias=True), "properties": properties})
 
 
+def with_comments(pr: PullRequest, count: int) -> PullRequest:
+    """PR со счётчиком комментариев в ``properties``."""
+    properties = {**pr.properties, "commentCount": count}
+    return PullRequest.model_validate({**pr.model_dump(by_alias=True), "properties": properties})
+
+
 @dataclass
 class PostedComment:
     pr_id: int
@@ -98,6 +105,10 @@ class FakeBitbucket:
     overrides: dict[int, PullRequest] = field(default_factory=dict)
     closed: bool = False
     calls: list[str] = field(default_factory=list)
+    replies: dict[int, list[Comment]] = field(default_factory=dict)
+    reactions: list[tuple[int, str]] = field(default_factory=list)
+    comment_error: BitbucketError | None = None
+    reaction_error: BitbucketError | None = None
 
     async def __aenter__(self) -> Self:
         return self
@@ -145,6 +156,26 @@ class FakeBitbucket:
         if not task:
             self.status_texts.append(text)
         return Comment(id=comment_id, version=0, text=text)
+
+    async def get_comment(self, pr: PullRequest, comment_id: int) -> Comment:
+        self.calls.append("get_comment")
+        if self.comment_error is not None:
+            raise self.comment_error
+        for comment in self.comments:
+            if comment.id == comment_id and comment.id not in self.deleted:
+                known = self.replies.get(comment_id, ())
+                replies = [reply.model_dump(by_alias=True) for reply in known]
+                return Comment.model_validate({
+                    "id": comment_id,
+                    "text": comment.text,
+                    "comments": replies,
+                })
+        raise BitbucketError("not found", status_code=404)
+
+    async def add_reaction(self, pr: PullRequest, comment_id: int, emoticon: str) -> None:
+        if self.reaction_error is not None:
+            raise self.reaction_error
+        self.reactions.append((comment_id, emoticon))
 
     async def list_tasks(self, pr: PullRequest) -> list[Comment]:
         self.calls.append("list_tasks")
@@ -210,6 +241,27 @@ class FakeBitbucket:
     @property
     def summaries(self) -> list[PostedComment]:
         return [comment for comment in self.comments if not comment.task]
+
+
+def add_reply(
+    bitbucket: "FakeBitbucket",
+    comment_id: int,
+    text: str,
+    *,
+    author: str = "author",
+    created: float | None = None,
+) -> int:
+    """Ответ человека на комментарий ``comment_id``; ``created`` — время в секундах эпохи."""
+    reply_id = 1000 + sum(len(known) for known in bitbucket.replies.values())
+    moment = time.time() if created is None else created
+    reply = Comment.model_validate({
+        "id": reply_id,
+        "text": text,
+        "author": {"name": author, "slug": author, "displayName": author.title()},
+        "createdDate": int(moment * 1000),
+    })
+    bitbucket.replies.setdefault(comment_id, []).append(reply)
+    return reply_id
 
 
 def git(*args: str, cwd: Path) -> str:

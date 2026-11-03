@@ -1,11 +1,10 @@
 """Наблюдение за PR без нового коммита: последний опубликованный прогон и ход наблюдения."""
 
 import sqlite3
-from datetime import datetime
 
 from gigareview.statuses import RunStatus
-from gigareview.store.clock import parse_stamp, stamp
-from gigareview.store.records import RunRecord, TaskWatchRecord
+from gigareview.store.clock import parse_stamp, stamp_or_none
+from gigareview.store.records import RecheckWatchRecord, RunRecord, TaskWatchRecord
 
 __all__ = ["WatchRepository"]
 
@@ -14,7 +13,7 @@ _PR_CONDITION = "project = ? AND repo = ? AND pr_id = ?"
 
 
 class WatchRepository:
-    """Таблица ``task_watch`` и выборки прогонов, нужные наблюдению за закрытыми тасками."""
+    """Таблицы ``task_watch`` и ``recheck_watch``; выборки прогонов для наблюдения за PR."""
 
     def __init__(self, db: sqlite3.Connection) -> None:
         """Репозиторий поверх соединения ``db``."""
@@ -108,14 +107,44 @@ class WatchRepository:
                 watch.pr_id,
                 watch.run_id,
                 watch.task_counts,
-                _stamp_or_none(watch.checked_at),
-                _stamp_or_none(watch.retry_after),
-                _stamp_or_none(watch.clear_since),
+                stamp_or_none(watch.checked_at),
+                stamp_or_none(watch.retry_after),
+                stamp_or_none(watch.clear_since),
                 watch.settled_status,
             ),
         )
 
+    def recheck(self, project: str, repo: str, pr_id: int) -> RecheckWatchRecord:
+        """Сверка ответов «/recheck» на статусный комментарий PR; не сверялся — пустая запись."""
+        row = self._db.execute(
+            # В текст запроса подставляются только условия из кода.
+            f"SELECT * FROM recheck_watch WHERE {_PR_CONDITION}",  # noqa: S608
+            (project, repo, pr_id),
+        ).fetchone()
+        if row is None:
+            return RecheckWatchRecord(project, repo, pr_id)
+        return RecheckWatchRecord(
+            project=project,
+            repo=repo,
+            pr_id=pr_id,
+            comment_count=row["comment_count"],
+            last_reply_id=row["last_reply_id"],
+            checked_at=parse_stamp(row["checked_at"]),
+            retry_after=parse_stamp(row["retry_after"]),
+        )
 
-def _stamp_or_none(moment: datetime | None) -> str | None:
-    """Время для базы; ``None`` остаётся ``None``."""
-    return None if moment is None else stamp(moment)
+    def save_recheck(self, watch: RecheckWatchRecord) -> None:
+        """Сохраняет ход сверки ответов «/recheck» (одна запись на PR)."""
+        self._db.execute(
+            "INSERT OR REPLACE INTO recheck_watch (project, repo, pr_id, comment_count, "
+            "last_reply_id, checked_at, retry_after) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (
+                watch.project,
+                watch.repo,
+                watch.pr_id,
+                watch.comment_count,
+                watch.last_reply_id,
+                stamp_or_none(watch.checked_at),
+                stamp_or_none(watch.retry_after),
+            ),
+        )

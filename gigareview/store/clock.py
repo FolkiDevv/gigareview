@@ -2,7 +2,7 @@
 
 from datetime import UTC, datetime
 
-__all__ = ["clock_time", "parse_stamp", "stamp", "utc_now"]
+__all__ = ["clock_time", "parse_stamp", "stamp", "stamp_or_none", "utc_now"]
 
 
 def utc_now() -> datetime:
@@ -13,6 +13,11 @@ def utc_now() -> datetime:
 def stamp(moment: datetime | None = None) -> str:
     """Время в ISO 8601 для базы (по умолчанию — сейчас)."""
     return (moment or utc_now()).isoformat()
+
+
+def stamp_or_none(moment: datetime | None) -> str | None:
+    """Время для базы; ``None`` остаётся ``None``."""
+    return None if moment is None else stamp(moment)
 
 
 def parse_stamp(moment: str | None) -> datetime | None:
