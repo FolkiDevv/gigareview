@@ -108,6 +108,7 @@ def run_page(
         notice=notice,
         error=error,
         run=run,
+        daemon_status=daemon.status(),
         scenarios=scenarios,
         upcoming=_upcoming(daemon.config, run, scenarios),
         comments=store.comments.for_run(run_id),

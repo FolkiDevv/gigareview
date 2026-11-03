@@ -63,6 +63,7 @@ async def _cutoff(request: AnyRequest) -> datetime | None:
     form = await request.form()
     try:
         days = int(str(form.get("days", "")))
-    except ValueError:
+        before = utc_now() - timedelta(days=days)
+    except (ValueError, OverflowError):
         return None
-    return utc_now() - timedelta(days=days) if days >= 1 else None
+    return before if days >= 1 else None

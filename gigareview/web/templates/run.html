@@ -13,10 +13,10 @@
       </div>
     </div>
     <div class="actions">
-      {% if run.status == "queued" %}
+      {% if run.id in daemon_status.queued_runs %}
       {{ action("/runs/" ~ run.id ~ "/prioritize", "Run next", csrf_input) }}
       {% endif %}
-      {% if run.status in ("queued", "running") %}
+      {% if run.id in daemon_status.queued_runs or run.id in daemon_status.active_runs %}
       {{ action("/runs/" ~ run.id ~ "/cancel", "Cancel", csrf_input, "danger", "Cancel run #" ~ run.id ~ "?") }}
       {% endif %}
       {% if run.status not in ("queued", "running") and scenarios | selectattr("outcome", "equalto", "error") | list %}

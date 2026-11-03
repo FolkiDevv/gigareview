@@ -44,6 +44,7 @@ class RunQueue:
         self._idle.set()
         self._unfinished = 0
         self._taken: dict[int, asyncio.Task[object]] = {}
+        self._stopping: set[int] = set()
         self._locks: defaultdict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
 
     def queued_ids(self) -> tuple[int, ...]:
@@ -94,6 +95,7 @@ class RunQueue:
             raise
         finally:
             self._taken.pop(job.run_id, None)
+            self._stopping.discard(job.run_id)
         if task.cancelled():
             self._mark_cancelled(job.run_id)
             return
@@ -113,6 +115,10 @@ class RunQueue:
         """
         task = self._taken.get(run_id)
         if task is not None and not task.done():
+            # Повторная отмена прервала бы уборку первой (запись в PR «проверка прервана»).
+            if run_id in self._stopping:
+                return False
+            self._stopping.add(run_id)
             task.cancel()
             self._store.events.add(EventLevel.NOTE, f"Прогон #{run_id}: запрошена отмена", run_id)
             return False

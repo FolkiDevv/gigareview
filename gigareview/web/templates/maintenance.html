@@ -9,7 +9,8 @@
   Deletes finished runs older than the given number of days together with their scenario output and
   stored Bitbucket comments. Runs the daemon still relies on are kept: the latest and the latest
   published run of each PR, the latest published run of each scenario, the owner of the PR status
-  comment, runs with open tasks and runs being watched. Older than {{ default_days }} days now:
+  comment, all runs of the current PR commit, runs with open or dismissed tasks and runs being
+  watched. Older than {{ default_days }} days now:
   <b>{{ stale_runs }}</b>.
 </p>
 <form class="filters" method="post" action="/maintenance/purge-runs" onsubmit="return confirm('Delete old runs?')">

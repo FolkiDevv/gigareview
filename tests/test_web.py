@@ -1,3 +1,4 @@
+import asyncio
 import re
 from collections.abc import Iterator
 from pathlib import Path
@@ -462,6 +463,9 @@ def test_queue_on_overview_and_run_page(client: Client, daemon: Daemon, store: S
     assert f"/runs/{first}/prioritize" in run_page
     assert f"/runs/{first}/cancel" in run_page
     assert client.get("/api/status").json()["queued_runs"] == [first, second]
+    # Прогон, который воркер уже взял (ждёт свой репозиторий), переставить нельзя.
+    assert asyncio.run(daemon.queue.get()).run_id == first
+    assert f"/runs/{first}/prioritize" not in client.get(f"/runs/{first}").text
 
 
 def test_cancel_and_prioritize_actions(client: Client, daemon: Daemon, store: Store) -> None:
@@ -495,7 +499,7 @@ def test_maintenance_page_and_purge(client: Client, store: Store) -> None:
     # Записи свежие: при сроке в день удалять нечего.
     kept = client.post("/maintenance/purge-runs", headers=headers, data={"days": "1"})
     assert "Runs deleted: 0" in kept.text
-    for days in ("0", "soon"):
+    for days in ("0", "soon", "1000000000"):
         bad = client.post(
             "/maintenance/purge-events",
             headers=headers,

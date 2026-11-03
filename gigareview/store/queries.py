@@ -19,7 +19,9 @@ __all__ = ["RunQueries"]
 # прогон PR и последний опубликованный (наблюдение за тасками, «/recheck»), последний
 # опубликованный по каждому сценарию (точка отсчёта инкрементального ревью), владелец
 # последнего статусного комментария PR (его обновляют следующие прогоны), прогоны с
-# открытыми тасками демона и базовые прогоны ещё не завершённых перезапусков.
+# открытыми тасками демона и с тасками, отклонёнными человеком (ИИ-ревью не поднимает их
+# снова), все прогоны последнего коммита PR (по ним считаются попытки опроса и лимит
+# «/recheck») и базовые прогоны ещё не завершённых перезапусков.
 _PROTECTED = (
     "SELECT max(id) FROM runs GROUP BY project, repo, pr_id "
     "UNION SELECT max(id) FROM runs WHERE published = 1 GROUP BY project, repo, pr_id "
@@ -31,7 +33,11 @@ _PROTECTED = (
     "UNION SELECT run_id FROM bb_comments WHERE id IN ("
     "SELECT max(id) FROM bb_comments WHERE kind = :summary GROUP BY project, repo, pr_id) "
     "UNION SELECT run_id FROM bb_comments "
-    "WHERE kind = :task AND resolved = 0 AND dismissed = 0 "
+    "WHERE kind = :task AND (resolved = 0 OR dismissed = 1) "
+    "UNION SELECT runs.id FROM runs JOIN runs AS latest "
+    "ON latest.project = runs.project AND latest.repo = runs.repo "
+    "AND latest.pr_id = runs.pr_id AND latest.commit_id = runs.commit_id "
+    "WHERE latest.id IN (SELECT max(id) FROM runs GROUP BY project, repo, pr_id) "
     "UNION SELECT run_id FROM task_watch "
     "UNION SELECT base_run_id FROM runs "
     "WHERE base_run_id IS NOT NULL AND status IN (:queued, :running)"

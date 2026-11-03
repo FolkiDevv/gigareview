@@ -87,6 +87,8 @@ def test_cancel_running_and_waiting_runs(tmp_path: Path, store: Store, origin: O
         await _until(lambda: _run(store, waiting).status is RunStatus.CANCELLED)
         assert _run(store, running).status is RunStatus.RUNNING
         assert not daemon.queue.cancel(running)
+        # Повторная отмена не мешает уборке первой.
+        assert not daemon.queue.cancel(running)
         await asyncio.wait_for(daemon.wait_idle(), timeout=20)
         assert not daemon.status().active_runs
         await daemon.stop()
