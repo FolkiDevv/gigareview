@@ -5,9 +5,11 @@
 
 from gigareview.scenarios.ai_prompt import OpenTask as OpenTask
 from gigareview.scenarios.ai_prompt import open_tasks_json as open_tasks_json
+from gigareview.scenarios.report import RECHECK_COMMAND as RECHECK_COMMAND
 from gigareview.scenarios.report import crash_text as crash_text
 from gigareview.scenarios.report import guide_text as guide_text
 from gigareview.scenarios.report import overall_status as overall_status
+from gigareview.scenarios.report import recheck_hint as recheck_hint
 from gigareview.scenarios.report import settled_text as settled_text
 from gigareview.scenarios.report import summary_table as summary_table
 from gigareview.scenarios.report import summary_text as summary_text

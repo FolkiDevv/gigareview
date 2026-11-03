@@ -34,11 +34,12 @@ class RunStatus(StrEnum):
 
 @unique
 class Trigger(StrEnum):
-    """Кто запустил прогон: опрос демона, кнопка в Web Dashboard или командная строка."""
+    """Кто запустил прогон: опрос, Web Dashboard, командная строка или «/recheck» из PR."""
 
     AUTO = "auto"
     MANUAL = "manual"
     CLI = "cli"
+    RECHECK = "recheck"
 
 
 @unique

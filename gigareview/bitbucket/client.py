@@ -2,6 +2,7 @@
 
 import ssl
 from collections.abc import AsyncIterator, Awaitable, Callable
+from functools import partial
 from http import HTTPStatus
 from types import TracebackType
 from typing import Any, Self
@@ -17,12 +18,13 @@ from gigareview.statuses import ReviewStatus
 __all__ = ["BitbucketClient"]
 
 _API = "/rest/api/1.0"
+_REACTIONS_API = "/rest/comment-likes/latest"
 _PAGE_LIMIT = 100
 _TIMEOUT = 30.0
 _ERROR_BODY_CHARS = 500
 
 type _Json = dict[str, Any]
-#: Запрос с JSON-ответом (:meth:`BitbucketClient._json`).
+#: Запрос с JSON-ответом (:func:`_json` над HTTP-клиентом).
 type _Fetch = Callable[..., Awaitable[_Json]]
 
 
@@ -70,7 +72,7 @@ class BitbucketClient:
     async def current_slug(self) -> str:
         """Slug пользователя: заданный явно или из заголовка ``X-AUSERNAME``."""
         if not self._slug:
-            response = await self._send("GET", f"{_API}/application-properties")
+            response = await _send(self._http, "GET", f"{_API}/application-properties")
             self._slug = response.headers.get("X-AUSERNAME", "")
         if not self._slug:
             raise BitbucketError(
@@ -80,12 +82,13 @@ class BitbucketClient:
 
     async def list_review_prs(self) -> list[PullRequest]:
         """Открытые PR со всего сервера, где текущий пользователь — ревьюер (все страницы)."""
-        pages = _pages(self._json, f"{_API}/dashboard/pull-requests", role="REVIEWER", state="OPEN")
+        fetch = partial(_json, self._http)
+        pages = _pages(fetch, f"{_API}/dashboard/pull-requests", role="REVIEWER", state="OPEN")
         return [PullRequest.model_validate(raw) async for raw in pages]
 
     async def get_pull_request(self, project: str, repo: str, pr_id: int) -> PullRequest:
         """PR по номеру."""
-        raw = await self._json("GET", _pr_path(project, repo, pr_id))
+        raw = await _json(self._http, "GET", _pr_path(project, repo, pr_id))
         return PullRequest.model_validate(raw)
 
     async def add_comment(
@@ -104,15 +107,26 @@ class BitbucketClient:
         body: dict[str, Any] = {"text": text, "severity": "BLOCKER" if task else "NORMAL"}
         path = f"{_pr_path(pr.project, pr.repo, pr.id)}/comments"
         if anchor is None:
-            return Comment.model_validate(await self._json("POST", path, json=body))
+            return Comment.model_validate(await _json(self._http, "POST", path, json=body))
         try:
-            raw = await self._json("POST", path, json={**body, "anchor": _anchor(anchor)})
+            raw = await _json(self._http, "POST", path, json={**body, "anchor": _anchor(anchor)})
         except BitbucketError as error:
             if error.status_code not in {HTTPStatus.BAD_REQUEST, HTTPStatus.CONFLICT}:
                 raise
             body["text"] = f"`{_location(anchor)}`\n\n{text}"
-            raw = await self._json("POST", path, json=body)
+            raw = await _json(self._http, "POST", path, json=body)
         return Comment.model_validate(raw)
+
+    async def get_comment(self, pr: PullRequest, comment_id: int) -> Comment:
+        """Комментарий PR вместе с ответами (``comments``)."""
+        raw = await _json(self._http, "GET", _comment_path(pr, comment_id))
+        return Comment.model_validate(raw)
+
+    async def add_reaction(self, pr: PullRequest, comment_id: int, emoticon: str) -> None:
+        """Реакция на комментарий (REST comment-likes, Bitbucket Data Center 7.x+)."""
+        repo_path = f"projects/{pr.project}/repos/{pr.repo}/pull-requests/{pr.id}"
+        path = f"{_REACTIONS_API}/{repo_path}/comments/{comment_id}/reactions/{emoticon}"
+        await _send(self._http, "PUT", path)
 
     async def list_tasks(self, pr: PullRequest) -> list[Comment]:
         """Открытые таски PR одним обходом страниц ``blocker-comments``.
@@ -121,7 +135,8 @@ class BitbucketClient:
         закрытыми. Если сервер не учтёт фильтр, придут и закрытые — у них ``state``.
         """
         path = f"{_pr_path(pr.project, pr.repo, pr.id)}/blocker-comments"
-        return [Comment.model_validate(raw) async for raw in _pages(self._json, path, state="OPEN")]
+        pages = _pages(partial(_json, self._http), path, state="OPEN")
+        return [Comment.model_validate(raw) async for raw in pages]
 
     async def resolve_task(self, pr: PullRequest, comment_id: int, version: int) -> Comment:
         """Помечает таску выполненной; устаревшая версия — перечитывает и повторяет."""
@@ -140,7 +155,8 @@ class BitbucketClient:
     async def set_review_status(self, pr: PullRequest, status: ReviewStatus) -> None:
         """Статус ревью текущего пользователя: APPROVED, NEEDS_WORK или UNAPPROVED."""
         slug = await self.current_slug()
-        await self._json(
+        await _json(
+            self._http,
             "PUT",
             f"{_pr_path(pr.project, pr.repo, pr.id)}/participants/{slug}",
             json={
@@ -160,40 +176,52 @@ class BitbucketClient:
         """Изменение комментария; при HTTP 409 (версия устарела) — с версией из Bitbucket."""
         path = _comment_path(pr, comment_id)
         try:
-            raw = await self._json("PUT", path, json={"version": version, **changes})
+            raw = await _json(self._http, "PUT", path, json={"version": version, **changes})
         except BitbucketError as error:
             if error.status_code != HTTPStatus.CONFLICT:
                 raise
-            fresh = Comment.model_validate(await self._json("GET", path))
-            raw = await self._json("PUT", path, json={"version": fresh.version, **changes})
+            fresh = Comment.model_validate(await _json(self._http, "GET", path))
+            raw = await _json(self._http, "PUT", path, json={"version": fresh.version, **changes})
         return Comment.model_validate(raw)
 
-    async def _json(self, method: str, path: str, **kwargs: Any) -> dict[str, Any]:
-        """Запрос с JSON-ответом (пустой ответ — пустой словарь)."""
-        response = await self._send(method, path, **kwargs)
-        if not response.content:
-            return {}
-        try:
-            parsed: dict[str, Any] = response.json()
-        except ValueError as error:
-            body = response.text[:_ERROR_BODY_CHARS]
-            raise BitbucketError(
-                f"{method} {path}: ответ не JSON: {body}",
-                status_code=response.status_code,
-            ) from error
-        return parsed
 
-    async def _send(self, method: str, path: str, **kwargs: Any) -> httpx.Response:
-        """Запрос; сетевая ошибка или неуспешный статус — :class:`BitbucketError`."""
-        try:
-            response = await self._http.request(method, path, **kwargs)
-        except httpx.HTTPError as error:
-            raise BitbucketError(f"Ошибка сети: {error}") from error
-        if response.is_error:
-            code = response.status_code
-            body = response.text[:_ERROR_BODY_CHARS]
-            raise BitbucketError(f"{method} {path}: HTTP {code}: {body}", status_code=code)
-        return response
+async def _json(
+    http: httpx.AsyncClient,
+    method: str,
+    path: str,
+    **kwargs: Any,
+) -> dict[str, Any]:
+    """Запрос с JSON-ответом (пустой ответ — пустой словарь)."""
+    response = await _send(http, method, path, **kwargs)
+    if not response.content:
+        return {}
+    try:
+        parsed: dict[str, Any] = response.json()
+    except ValueError as error:
+        body = response.text[:_ERROR_BODY_CHARS]
+        raise BitbucketError(
+            f"{method} {path}: ответ не JSON: {body}",
+            status_code=response.status_code,
+        ) from error
+    return parsed
+
+
+async def _send(
+    http: httpx.AsyncClient,
+    method: str,
+    path: str,
+    **kwargs: Any,
+) -> httpx.Response:
+    """Запрос; сетевая ошибка или неуспешный статус — :class:`BitbucketError`."""
+    try:
+        response = await http.request(method, path, **kwargs)
+    except httpx.HTTPError as error:
+        raise BitbucketError(f"Ошибка сети: {error}") from error
+    if response.is_error:
+        code = response.status_code
+        body = response.text[:_ERROR_BODY_CHARS]
+        raise BitbucketError(f"{method} {path}: HTTP {code}: {body}", status_code=code)
+    return response
 
 
 async def _pages(

@@ -184,7 +184,9 @@ def _upcoming(
     done = {scenario.name for scenario in finished}
     order = review_order(config.scenarios_for(repo))
     left = [scenario for scenario in order if scenario.name not in done]
-    started = run.status is RunStatus.RUNNING and bool(run.setup_log or finished)
+    # Итоги, перенесённые из базового прогона, появляются до подготовки копии PR.
+    executed = [scenario for scenario in finished if scenario.reused_from is None]
+    started = run.status is RunStatus.RUNNING and bool(run.setup_log or executed)
     return [
         (scenario, RunStatus.RUNNING if started and index == 0 else RunStatus.QUEUED)
         for index, scenario in enumerate(left)

@@ -12,6 +12,7 @@ from gigareview.config import Config, DaemonSettings, RepoConfig, Scenario, Scen
 from gigareview.errors import GigaReviewError, SetupError
 from gigareview.pipeline.incremental import history_env, scenario_history, settle
 from gigareview.pipeline.publish import Publisher, withdraw_approval
+from gigareview.pipeline.reuse import reused_reports
 from gigareview.pipeline.status import StatusBoard
 from gigareview.pipeline.tracking import TaskStates, fetch_task_states
 from gigareview.pipeline.workspace import RepoLock, Workspace, prepare_workspace, scenario_env
@@ -29,10 +30,19 @@ _WATCHED = frozenset((RunStatus.ISSUES, RunStatus.FAILED))
 #: Сколько символов ошибки сценария показывать в журнале (полная — на странице прогона).
 _ERROR_CHARS = 200
 _SHORT_COMMIT = 10
+#: Этапы прогона: сценарии каждого этапа по порядку.
+type _Phases = list[tuple[Scenario, ...]]
 
 
-def new_run(pr: PullRequest, trigger: Trigger, *, fingerprint: str, dry_run: bool) -> NewRun:
-    """Запись нового прогона по PR."""
+def new_run(
+    pr: PullRequest,
+    trigger: Trigger,
+    *,
+    fingerprint: str,
+    dry_run: bool,
+    base_run_id: int | None = None,
+) -> NewRun:
+    """Запись нового прогона по PR; ``base_run_id`` — прогон, чьи упавшие сценарии повторяются."""
     return NewRun(
         project=pr.project,
         repo=pr.repo,
@@ -46,6 +56,7 @@ def new_run(pr: PullRequest, trigger: Trigger, *, fingerprint: str, dry_run: boo
         trigger=trigger,
         fingerprint=fingerprint,
         dry_run=dry_run,
+        base_run_id=base_run_id,
     )
 
 
@@ -81,7 +92,7 @@ class Reviewer:
         repo = self.config.find_repo(pr.project, pr.repo)
         if run is None or repo is None:
             raise SetupError(f"Репозиторий {pr.project}/{pr.repo} не описан в конфигурации")
-        phases = _phases(self.config.scenarios_for(repo))
+        phases, reused = self._plan(run, repo)
         if not phases:
             raise SetupError(f"Для {repo.key} не задано ни одного сценария")
         if not run.dry_run:
@@ -102,19 +113,48 @@ class Reviewer:
             policy=policy,
         )
         progress = _Progress(run, pr, board, policy=policy)
+        self._reuse(progress, reused)
         # Копия занята другим процессом — ошибка до того, как в PR что-то написано.
         with RepoLock(self.config.daemon.home, repo):
             if not run.dry_run:
                 await self._withdraw(pr, run.id)
             # Сообщение — сразу, до подготовки копии: долгие ИИ-сценарии не должны
             # выглядеть так, будто PR никто не проверяет.
-            await board.show(pr, (), pending=tuple(chain.from_iterable(phases)))
+            await board.show(pr, progress.reports, pending=tuple(chain.from_iterable(phases)))
             try:
                 note = await self._run_phases(progress, repo, phases)
             except Exception:
                 await board.fail(pr)
                 raise
         return overall_status(progress.reports), note
+
+    def _plan(
+        self,
+        run: RunRecord,
+        repo: RepoConfig,
+    ) -> tuple[_Phases, tuple[ScenarioReport, ...]]:
+        """Этапы прогона и итоги, перенесённые из базового прогона.
+
+        Отпечаток конфигурации, с которой прогон выполняется, записывается в прогон: её могли
+        перечитать, пока он ждал очереди, а следующий перезапуск сверяет итоги по отпечатку.
+        """
+        scenarios = self.config.scenarios_for(repo)
+        fingerprint = self.config.fingerprint(repo)
+        self._store.runs.set_fingerprint(run.id, fingerprint)
+        reused = reused_reports(self._store, run, scenarios, fingerprint=fingerprint)
+        return _phases(_remaining(scenarios, reused)), reused
+
+    def _reuse(self, progress: "_Progress", reused: Sequence[ScenarioReport]) -> None:
+        """Итоги сценариев, перенесённые из базового прогона, — в базу и в итоги прогона."""
+        for report in reused:
+            self._store.runs.add_scenario(progress.run.id, len(progress.reports), _record(report))
+            progress.reports.append(report)
+        if reused:
+            titles = ", ".join(reused_report.scenario.display_title for reused_report in reused)
+            label = _pr_label(progress.pr)
+            base = progress.run.base_run_id
+            message = f"{label}: перезапуск упавших сценариев прогона #{base}, перенесены: {titles}"
+            self._event(EventLevel.NOTE, message, progress.run.id)
 
     async def _run_phases(
         self,
@@ -219,35 +259,26 @@ class Reviewer:
     ) -> str:
         """Таски этапа и статусный комментарий; после последнего этапа — статус ревью.
 
-        Публикуется, только пока PR открыт на том же коммите; иначе — примечание, и
-        оставшиеся этапы не выполняются: новый коммит проверит следующий прогон.
+        Публикуется, только пока PR открыт на том же коммите и с той же целевой веткой; иначе —
+        примечание, и оставшиеся этапы не выполняются: итоги посчитаны не для этого PR.
         """
         run, pr = progress.run, progress.pr
         if run.dry_run:
             return ""
         fresh = await self._api.get_pull_request(pr.project, pr.repo, pr.id)
-        if fresh.state != "OPEN" or fresh.commit != pr.commit:
+        if _changed(pr, fresh):
             note = _CHANGED_NOTE
             if pending:
                 note = f"{note}, оставшиеся сценарии не запускались"
             self._event(EventLevel.WARNING, f"{_pr_label(pr)}: {note}", run.id)
             return note
         states = await self._snapshot(progress, fresh)
-        # Открытая ручная таска пользователя демона — его замечание: PR не одобряется.
-        approve = progress.policy.approve and not states.manual
         publisher = Publisher(self._api, self._store, run.id, states)
         await publisher.publish_tasks(fresh, phase_reports)
-        await progress.board.show(fresh, progress.reports, pending, approve=approve)
-        if not pending:
-            await publisher.finish(
-                fresh,
-                progress.reports,
-                overall_status(progress.reports),
-                approve=progress.policy.approve,
-            )
-            self._store.runs.mark_published(run.id)
-            if self._store.watch.is_held(run.id) or overall_status(progress.reports) in _WATCHED:
-                self._event(EventLevel.NOTE, _watch_note(pr, progress.policy), run.id)
+        if pending:
+            await progress.board.show(fresh, progress.reports, pending)
+            return ""
+        await _conclude(self._store, progress, publisher, fresh)
         return ""
 
     async def _snapshot(self, progress: "_Progress", fresh: PullRequest) -> TaskStates:
@@ -297,16 +328,55 @@ class _Progress:
     states: TaskStates | None = None
 
 
-def _phases(scenarios: Sequence[Scenario]) -> list[tuple[Scenario, ...]]:
+async def _conclude(
+    store: Store,
+    progress: "_Progress",
+    publisher: Publisher,
+    fresh: PullRequest,
+) -> None:
+    """Последний этап опубликован: статус ревью, итог статусного комментария, наблюдение.
+
+    Итог — после статуса: таски уже закрыты, и известно, держат ли PR открытые таски.
+    """
+    run = progress.run
+    held = await publisher.finish(
+        fresh,
+        progress.reports,
+        overall_status(progress.reports),
+        approve=progress.policy.approve,
+    )
+    await progress.board.show(fresh, progress.reports, approve=not held)
+    store.runs.mark_published(run.id)
+    if store.watch.is_held(run.id) or overall_status(progress.reports) in _WATCHED:
+        store.events.add(EventLevel.NOTE, _watch_note(progress.pr, progress.policy), run.id)
+
+
+def _phases(scenarios: Sequence[Scenario]) -> _Phases:
     """Этапы прогона: сначала обычные сценарии, затем долгие ИИ-сценарии."""
     simple = tuple(scenario for scenario in scenarios if scenario.kind is ScenarioKind.SIMPLE)
     smart = tuple(scenario for scenario in scenarios if scenario.kind is ScenarioKind.AI)
     return [phase for phase in (simple, smart) if phase]
 
 
+def _remaining(
+    scenarios: Sequence[Scenario],
+    reused: Sequence[ScenarioReport],
+) -> list[Scenario]:
+    """Сценарии, которые прогон выполняет: все, кроме перенесённых из базового прогона."""
+    names = {report.scenario.name for report in reused}
+    return [scenario for scenario in scenarios if scenario.name not in names]
+
+
 def review_order(scenarios: Sequence[Scenario]) -> tuple[Scenario, ...]:
     """Сценарии в порядке выполнения прогоном (этапы друг за другом)."""
     return tuple(chain.from_iterable(_phases(scenarios)))
+
+
+def _changed(pr: PullRequest, fresh: PullRequest) -> bool:
+    """PR закрыли, в него пришёл новый коммит или сменили целевую ветку (MERGE_BASE и дифф)."""
+    if fresh.state != "OPEN" or fresh.commit != pr.commit:
+        return True
+    return fresh.to_ref.display_id != pr.to_ref.display_id
 
 
 def _pr_label(pr: PullRequest) -> str:
@@ -356,4 +426,5 @@ def _record(report: ScenarioReport) -> ScenarioRecord:
         tasks=tuple(task.text for task in report.tasks),
         error=report.error,
         partial=report.partial,
+        reused_from=report.reused_from,
     )

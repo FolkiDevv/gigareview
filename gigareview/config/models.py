@@ -29,6 +29,7 @@ __all__ = [
 
 _SIMPLE_TIMEOUT_MINUTES = 3
 _AI_TIMEOUT_MINUTES = 20
+_MAX_RECHECKS = 3
 _RESOLVE_DELAY_MINUTES = 15
 _DEFAULT_PORT = 8765
 _SECONDS_IN_MINUTE = 60
@@ -154,6 +155,9 @@ class DaemonSettings(_Model):
     # Сколько минут PR без нового коммита после ручного закрытия всех тасок бота, прежде чем
     # снять «Требуются изменения»: закрыл таски и сразу запушил — проверяется новый коммит.
     resolve_delay_minutes: float = Field(default=_RESOLVE_DELAY_MINUTES, ge=0)
+    # Сколько раз на коммит автор PR или ревьюер может перезапустить упавшие сценарии
+    # ответом «/recheck» на статусный комментарий; 0 — перезапуск из PR выключен.
+    max_rechecks: int = Field(default=_MAX_RECHECKS, ge=0)
 
     @property
     def home(self) -> Path:

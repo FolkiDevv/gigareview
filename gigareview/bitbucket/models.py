@@ -104,6 +104,12 @@ class PullRequest(_ApiModel):
         return self.author.user.display_name or self.author.user.name
 
     @property
+    def comment_count(self) -> int | None:
+        """Комментарии PR из ``properties`` (``None`` — Bitbucket их не отдал)."""
+        count = self.properties.get("commentCount")
+        return count if isinstance(count, int) else None
+
+    @property
     def task_counts(self) -> tuple[int, int] | None:
         """Открытые и закрытые таски PR из ``properties`` (``None`` — Bitbucket их не отдал)."""
         opened = self.properties.get("openTaskCount")
@@ -129,11 +135,21 @@ class Comment(_ApiModel):
     state: str = "OPEN"
     severity: str = "NORMAL"
     author: User = Field(default_factory=User)
+    created_date: int = Field(default=0, alias="createdDate")
+    replies: tuple["Comment", ...] = Field(default=(), alias="comments")
 
     @property
     def is_open(self) -> bool:
         """Таска не закрыта."""
         return self.state != "RESOLVED"
+
+    def all_replies(self) -> list["Comment"]:
+        """Ответы на комментарий на всех уровнях вложенности."""
+        found: list[Comment] = []
+        for reply in self.replies:
+            found.append(reply)
+            found.extend(reply.all_replies())
+        return found
 
 
 @dataclass(frozen=True, slots=True)

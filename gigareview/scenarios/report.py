@@ -9,14 +9,19 @@ from gigareview.scenarios.tasks import Task
 from gigareview.statuses import Outcome, ReviewStatus, RunStatus
 
 __all__ = [
+    "RECHECK_COMMAND",
     "crash_text",
     "guide_text",
     "overall_status",
+    "recheck_hint",
     "settled_text",
     "summary_table",
     "summary_text",
     "task_text",
 ]
+
+#: Ответ на статусный комментарий, который перезапускает упавшие сценарии.
+RECHECK_COMMAND = "/recheck"
 
 #: Предел длины текста комментария (у Bitbucket ~32 тыс. символов).
 MAX_COMMENT_CHARS = 30_000
@@ -94,11 +99,13 @@ def summary_text(
     run_url: str,
     pending: Sequence[Scenario] = (),
     policy: DaemonSettings | None = None,
+    hint: str = "",
 ) -> str:
     """Статусный комментарий: таблица сценариев, итог (или «идут проверки»), ссылка, памятка.
 
     ``policy`` — настройки демона, с которыми идёт прогон: без ``approve`` успешный итог не
-    обещает одобрения PR, от ``resolve_delay_minutes`` зависит памятка.
+    обещает одобрения PR, от ``resolve_delay_minutes`` зависит памятка. ``hint`` — подсказка
+    под итогом (как перезапустить упавшие сценарии); пока идут проверки, она не нужна.
     """
     settings = policy or DaemonSettings()
     if pending and reports:
@@ -110,7 +117,7 @@ def summary_text(
     else:
         status_label = _STATUS_LABELS[overall_status(reports)]
     table = summary_table(reports, commit=commit, pending=pending)
-    return _finish(table, status_label, run_url, settings)
+    return _finish(table, status_label, run_url, settings, "" if pending else hint)
 
 
 def settled_text(
@@ -119,11 +126,12 @@ def settled_text(
     *,
     run_url: str,
     policy: DaemonSettings,
+    hint: str = "",
 ) -> str:
     """Статусный комментарий после ручного закрытия тасок (или их открытия заново).
 
     ``status`` — что поставлено: APPROVED, UNAPPROVED (без ``approve`` или при упавших
-    проверках) или NEEDS_WORK (таску открыли заново).
+    проверках) или NEEDS_WORK (таску открыли заново); ``hint`` — подсказка под итогом.
     """
     if status is ReviewStatus.APPROVED:
         status_label = _SETTLED_APPROVED_LABEL
@@ -133,12 +141,40 @@ def settled_text(
         status_label = _SETTLED_FAILED_LABEL
     else:
         status_label = _SETTLED_LABEL
-    return _finish(table, status_label, run_url, policy)
+    return _finish(table, status_label, run_url, policy, hint)
 
 
-def crash_text(*, commit: str, run_url: str, policy: DaemonSettings | None = None) -> str:
+def crash_text(
+    *,
+    commit: str,
+    run_url: str,
+    policy: DaemonSettings | None = None,
+    hint: str = "",
+) -> str:
     """Статусный комментарий прогона, который упал (git, init, Bitbucket)."""
-    return _finish(_header(commit), _CRASH_LABEL, run_url, policy or DaemonSettings())
+    return _finish(_header(commit), _CRASH_LABEL, run_url, policy or DaemonSettings(), hint)
+
+
+def recheck_hint(policy: DaemonSettings, used: int) -> str:
+    """Подсказка под итогом, когда проверки упали: как их перезапустить и сколько ещё можно.
+
+    ``used`` — сколько раз упавшие сценарии коммита уже перезапускали; пусто — перезапуск
+    из PR выключен (``max_rechecks = 0``).
+    """
+    limit = policy.max_rechecks
+    if not limit:
+        return ""
+    left = limit - used
+    if left <= 0:
+        return (
+            f"🔁 Лимит перезапусков упавших сценариев для этого коммита исчерпан ({limit}): "
+            "новый коммит проверится заново."
+        )
+    return (
+        "🔁 Проверка не удалась (например, ИИ не уложился в тайм-аут)? Ответьте на этот "
+        f"комментарий `{RECHECK_COMMAND}` — бот перезапустит только упавшие сценарии "
+        f"(осталось перезапусков: {left} из {limit})."
+    )
 
 
 def guide_text(policy: DaemonSettings) -> str:
@@ -159,7 +195,15 @@ def guide_text(policy: DaemonSettings) -> str:
         "- Открытая заново таска снова блокирует PR. Новый коммит снимает одобрение бота до "
         "конца проверки."
     )
-    return f"---\n**Как работать со мной**\n{fixed}\n{false_positive}\n{reopened}"
+    lines = ["---", "**Как работать со мной**", fixed, false_positive, reopened]
+    if policy.max_rechecks:
+        lines.append(
+            f"- Проверка не удалась — ответьте на этот комментарий `{RECHECK_COMMAND}` (автор "
+            f"PR или ревьюер): бот перезапустит упавшие сценарии, до {policy.max_rechecks} раз "
+            "на коммит. 👍 на ответе — перезапуск принят, 👎 — отклонён (нечего перезапускать, "
+            "проверка уже идёт или лимит исчерпан).",
+        )
+    return "\n".join(lines)
 
 
 def _header(commit: str) -> str:
@@ -168,10 +212,18 @@ def _header(commit: str) -> str:
     return f"**gigareview** — проверка коммита `{short_commit}`"
 
 
-def _finish(table: str, status_label: str, run_url: str, policy: DaemonSettings) -> str:
-    """Таблица, итог, ссылка на прогон в Web Dashboard и памятка."""
+def _finish(
+    table: str,
+    status_label: str,
+    run_url: str,
+    policy: DaemonSettings,
+    hint: str = "",
+) -> str:
+    """Таблица, итог, подсказка, ссылка на прогон в Web Dashboard и памятка."""
     parts = [table] if table else []
     parts.append(f"Итог: {status_label}")
+    if hint:
+        parts.append(hint)
     if run_url:
         parts.append(f"[Подробности прогона]({run_url})")
     parts.append(guide_text(policy))
@@ -184,7 +236,15 @@ def _summary_row(scenario: Scenario, label: str) -> str:
 
 
 def _outcome_label(report: ScenarioReport) -> str:
-    """Ячейка результата: исход и число тасок."""
+    """Ячейка результата; итог, перенесённый из прошлого прогона, — с его номером."""
+    label = _result_label(report)
+    if report.reused_from is None:
+        return label
+    return f"{label} (из прогона #{report.reused_from})"
+
+
+def _result_label(report: ScenarioReport) -> str:
+    """Исход сценария и число тасок."""
     label = _OUTCOME_LABELS[report.outcome]
     if report.outcome is Outcome.ERROR:
         # Причина (код 2, таймаут, неразборчивый вывод) — в Web Dashboard, не в PR.

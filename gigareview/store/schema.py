@@ -113,5 +113,24 @@ CREATE TABLE task_watch (
 );
 """
 
+# Перезапуск упавших сценариев ответом «/recheck» на статусный комментарий: base_run_id —
+# прогон, чьи упавшие сценарии перезапускаются; reused_from — результат сценария перенесён из
+# этого прогона без выполнения. recheck_watch — счётчик комментариев PR при последней сверке и
+# последний разобранный ответ на статусный комментарий.
+_RECHECK = """
+ALTER TABLE runs ADD COLUMN base_run_id INTEGER REFERENCES runs (id) ON DELETE SET NULL;
+ALTER TABLE scenario_results ADD COLUMN reused_from INTEGER;
+CREATE TABLE recheck_watch (
+    project TEXT NOT NULL,
+    repo TEXT NOT NULL,
+    pr_id INTEGER NOT NULL,
+    comment_count INTEGER,
+    last_reply_id INTEGER NOT NULL DEFAULT 0,
+    checked_at TEXT,
+    retry_after TEXT,
+    PRIMARY KEY (project, repo, pr_id)
+);
+"""
+
 #: Миграции по порядку: i-я переводит базу с версии i на i + 1.
-MIGRATIONS: tuple[str, ...] = (_INITIAL, _REVIEW_STATE, _PARTIAL, _WATCH)
+MIGRATIONS: tuple[str, ...] = (_INITIAL, _REVIEW_STATE, _PARTIAL, _WATCH, _RECHECK)

@@ -52,6 +52,10 @@ class RunRepository:
             (RunStatus.RUNNING.value, stamp(), run_id),
         )
 
+    def set_fingerprint(self, run_id: int, fingerprint: str) -> None:
+        """Отпечаток конфигурации, с которой прогон выполняется на самом деле."""
+        self._db.execute("UPDATE runs SET fingerprint = ? WHERE id = ?", (fingerprint, run_id))
+
     def append_setup_log(self, run_id: int, text: str) -> None:
         """Дописывает вывод подготовки (git, init) в журнал прогона."""
         self._db.execute(
@@ -88,6 +92,14 @@ class RunRepository:
         )
         return [ScenarioRecord.from_row(row) for row in rows]
 
+    def has_errors(self, run_id: int) -> bool:
+        """Какой-то сценарий прогона завершился некорректно (исход ``error``)."""
+        row = self._db.execute(
+            "SELECT 1 FROM scenario_results WHERE run_id = ? AND outcome = ? LIMIT 1",
+            (run_id, Outcome.ERROR.value),
+        ).fetchone()
+        return row is not None
+
     def should_skip(
         self,
         project: str,
@@ -115,6 +127,15 @@ class RunRepository:
             for row in rows
         )
         return errors >= MAX_AUTO_ATTEMPTS or any(status in _SETTLED for status in statuses)
+
+    def count_rechecks(self, project: str, repo: str, pr_id: int, commit_id: str) -> int:
+        """Сколько раз упавшие сценарии коммита PR перезапускали командой из PR."""
+        row = self._db.execute(
+            "SELECT COUNT(*) FROM runs WHERE project = ? AND repo = ? AND pr_id = ? "
+            "AND commit_id = ? AND trigger = ?",
+            (project, repo, pr_id, commit_id, Trigger.RECHECK.value),
+        ).fetchone()
+        return int(row[0])
 
     def last_reviewed_commit(
         self,

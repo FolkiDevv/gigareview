@@ -11,7 +11,7 @@ from litestar.testing import TestClient
 from gigareview.daemon import Daemon
 from gigareview.pipeline import new_run
 from gigareview.statuses import EventLevel, Outcome, RunStatus, Trigger
-from gigareview.store import CommentKind, ScenarioRecord, Store
+from gigareview.store import CommentKind, RunFilter, ScenarioRecord, Store
 from gigareview.web import create_app
 from gigareview.web.auth import TokenGuard
 
@@ -382,3 +382,67 @@ def test_templates_load_nothing_external_but_fonts() -> None:
     for template in TEMPLATES.glob("*.html"):
         hosts = {match.group(2) for match in external.finditer(template.read_text())}
         assert hosts <= {"fonts.googleapis.com", "fonts.gstatic.com"}, template.name
+
+
+def test_run_page_shows_recheck_and_reused_scenarios(tmp_path: Path, store: Store) -> None:
+    scenarios = {"lint": {"run": "true"}, "review": {"run": "true", "kind": "ai"}}
+    config = make_config(tmp_path / "home", "unused", scenarios=scenarios)
+    app = create_app(Daemon(config, store, FakeBitbucket()), store, csrf_secret="test")
+    base = store.runs.create(new_run(make_pr(1), Trigger.AUTO, fingerprint="fp", dry_run=False))
+    run = new_run(make_pr(1), Trigger.RECHECK, fingerprint="fp", dry_run=False, base_run_id=base)
+    run_id = store.runs.create(run)
+    store.runs.mark_running(run_id)
+    reused = ScenarioRecord("lint", "lint", "simple", Outcome.PASSED, 0, "", 1.0, reused_from=base)
+    store.runs.add_scenario(run_id, 0, reused)
+    with TestClient(app=app) as test_client:
+        page = test_client.get(f"/runs/{run_id}").text
+    assert f'failed scenarios of <a href="/runs/{base}">#{base}</a>' in page
+    assert f'not rerun, result of <a href="/runs/{base}">#{base}</a>' in page
+    # Копия PR ещё готовится: перенесённый итог не значит, что сценарии пошли.
+    assert page.count('class="scenario o-queued"') == 1
+    assert "o-running" not in page
+
+
+def test_rerun_failed_action(client: Client, store: Store) -> None:
+    run_id = _seed(store)
+    page = client.get(f"/runs/{run_id}").text
+    assert "/rerun-failed" not in page
+    failed = ScenarioRecord("review", "ИИ-ревью", "ai", Outcome.ERROR, None, "", 1.0)
+    store.runs.add_scenario(run_id, 1, failed)
+    page = client.get(f"/runs/{run_id}").text
+    assert f'action="/runs/{run_id}/rerun-failed"' in page
+    assert "Re-run failed" in page
+    headers = _csrf(client)
+    url = f"/runs/{run_id}/rerun-failed"
+    response = client.post(url, headers=headers, follow_redirects=False)
+    match = re.match(r"/runs/(\d+)\?notice=", response.headers["location"])
+    assert match is not None
+    rerun = store.runs.get(int(match.group(1)))
+    assert rerun is not None
+    assert rerun.trigger is Trigger.MANUAL
+    assert rerun.base_run_id == run_id
+    missing = client.post("/runs/999/rerun-failed", headers=headers, follow_redirects=False)
+    assert "error=" in missing.headers["location"]
+
+
+def test_rerun_failed_of_old_commit_is_refused(
+    client: Client,
+    store: Store,
+    api: FakeBitbucket,
+) -> None:
+    run_id = _seed(store)
+    api.prs = [make_pr(1, commit="newer")]
+    headers = _csrf(client)
+    url = f"/runs/{run_id}/rerun-failed"
+    response = client.post(url, headers=headers, follow_redirects=False)
+    assert "error=" in response.headers["location"]
+    assert len(store.queries.runs(RunFilter())) == 1
+
+
+def test_rerun_failed_without_failures_is_refused(client: Client, store: Store) -> None:
+    run_id = _seed(store)
+    headers = _csrf(client)
+    url = f"/runs/{run_id}/rerun-failed"
+    response = client.post(url, headers=headers, follow_redirects=False)
+    assert "error=" in response.headers["location"]
+    assert len(store.queries.runs(RunFilter())) == 1

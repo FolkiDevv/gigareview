@@ -11,7 +11,7 @@ from gigareview.scenarios import ScenarioReport, task_text
 from gigareview.statuses import EventLevel, Outcome, ReviewStatus, RunStatus
 from gigareview.store import CommentKind, Store, TaskDetails
 
-__all__ = ["Publisher", "review_decision", "withdraw_approval"]
+__all__ = ["Publisher", "blocking_tasks", "review_decision", "withdraw_approval"]
 
 _REASONS = MappingProxyType({
     ReviewStatus.NEEDS_WORK: "есть замечания",
@@ -61,6 +61,21 @@ async def withdraw_approval(api: BitbucketApi, store: Store, pr: PullRequest) ->
     return True
 
 
+def blocking_tasks(store: Store, pr: PullRequest, states: TaskStates) -> tuple[int, ...]:
+    """Открытые таски, с которыми PR нельзя одобрить: ручные пользователя демона и таски бота.
+
+    Таска бота остаётся открытой после публикации, если её открыли заново, а сценарий не
+    выполнялся (итог перенесён из прошлого прогона), или если её держит инкрементальный
+    сценарий — тогда у него и так есть замечания.
+    """
+    bot = (
+        record.comment_id
+        for record in store.comments.open_tasks(pr.project, pr.repo, pr.id)
+        if states.is_open(record.comment_id)
+    )
+    return (*states.manual, *bot)
+
+
 class Publisher:
     """Пишет результаты одного прогона в PR и запоминает опубликованное в базе."""
 
@@ -90,27 +105,31 @@ class Publisher:
         status: RunStatus,
         *,
         approve: bool = True,
-    ) -> None:
+    ) -> bool:
         """Все сценарии завершены: закрыть таски убранных сценариев, поставить статус ревью.
 
         Статус — по :func:`review_decision`: без ``approve`` APPROVED не ставится. Открытая
-        ручная таска пользователя демона — его замечание: пройденный PR получает NEEDS_WORK,
-        а наблюдение снимет его, когда таску закроют.
+        ручная таска пользователя демона или таска бота (см. :func:`blocking_tasks`) — замечание:
+        пройденный PR получает NEEDS_WORK, а наблюдение снимет его, когда таски закроют.
+        Возвращает, придержан ли PR открытыми тасками.
         """
         names = {report.scenario.name for report in reports}
         await self._resolve_previous(pr, (), lambda scenario: scenario not in names)
-        held = status is RunStatus.PASSED and bool(self._states.manual)
+        blocking = blocking_tasks(self._store, pr, self._states)
+        held = status is RunStatus.PASSED and bool(blocking)
         if held:
             status = RunStatus.ISSUES
         current = pr.reviewer_status(await self._api.current_slug())
         review_status = review_decision(status, current, approve=approve)
         if review_status is not None:
             await self._api.set_review_status(pr, review_status)
-        note = _decision_note(status, current, review_status, self._states.manual if held else ())
+        reason = _held_reason(blocking, self._states.manual) if held else ""
+        note = _decision_note(status, current, review_status, reason)
         self._store.events.add(EventLevel.NOTE, f"{_label(pr)}: {note}", self._run_id)
         if held:
             # После статуса: не поставленный статус не должен подменить наблюдение прогона.
             self._store.watch.hold(pr.project, pr.repo, pr.id, self._run_id)
+        return held
 
     async def _post_tasks(self, pr: PullRequest, report: ScenarioReport) -> int:
         """Таски сценария с замечаниями; возвращает, сколько опубликовано."""
@@ -180,20 +199,34 @@ def _decision_note(
     status: RunStatus,
     current: str | None,
     decision: ReviewStatus | None,
-    held: Sequence[int],
+    held_reason: str,
 ) -> str:
-    """Решение по статусу ревью для журнала; ``held`` — ручные таски, придержавшие PR."""
+    """Решение по статусу ревью для журнала; ``held_reason`` — какие таски придержали PR."""
     was = current or "—"
-    tasks = ", ".join(f"#{task_id}" for task_id in held)
-    held_reason = f"открыта ручная таска пользователя демона {tasks}"
     if decision is None:
-        if held:
+        if held_reason:
             return f"статус ревью не меняется: уже {was} ({held_reason})"
         if status is RunStatus.FAILED:
             return f"статус ревью не меняется ({was}): часть проверок не удалась"
         return f"статус ревью не меняется: {was}"
-    reason = held_reason if held else _REASONS[decision]
+    reason = held_reason or _REASONS[decision]
     return f"статус ревью: {was} → {decision} ({reason})"
+
+
+def _held_reason(blocking: Sequence[int], manual: Sequence[int]) -> str:
+    """Почему пройденный PR не одобрен: открытые ручные таски и таски бота."""
+    bot = [task_id for task_id in blocking if task_id not in manual]
+    parts = []
+    if manual:
+        parts.append(f"открыта ручная таска пользователя демона {_ids(manual)}")
+    if bot:
+        parts.append(f"открыта таска бота {_ids(bot)}")
+    return "; ".join(parts)
+
+
+def _ids(task_ids: Sequence[int]) -> str:
+    """Номера тасок для журнала."""
+    return ", ".join(f"#{task_id}" for task_id in task_ids)
 
 
 def _label(pr: PullRequest) -> str:

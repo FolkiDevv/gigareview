@@ -34,6 +34,14 @@ class BitbucketApi(Protocol):
         """Комментарий к PR; ``task`` — таска (BLOCKER), ``anchor`` — к строке файла."""
         ...
 
+    async def get_comment(self, pr: PullRequest, comment_id: int) -> Comment:
+        """Комментарий PR вместе с ответами."""
+        ...
+
+    async def add_reaction(self, pr: PullRequest, comment_id: int, emoticon: str) -> None:
+        """Реакция (эмодзи ``emoticon``) пользователя демона на комментарий."""
+        ...
+
     async def list_tasks(self, pr: PullRequest) -> list[Comment]:
         """Открытые таски PR (комментарии BLOCKER) — все страницы; закрытых может не быть."""
         ...

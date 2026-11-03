@@ -11,6 +11,7 @@ max_parallel = 1              # сколько прогонов одноврем
 dry_run = false               # true — ничего не писать в Bitbucket
 approve = true                # false — не ставить APPROVED (NEEDS_WORK — как обычно)
 resolve_delay_minutes = 15    # все таски закрыты вручную — снять NEEDS_WORK через N мин без пуша
+max_rechecks = 3              # перезапусков упавших сценариев на коммит по «/recheck»; 0 — выкл.
 
 [bitbucket]
 url = "https://bitbucket.example.com"

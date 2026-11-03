@@ -16,6 +16,7 @@ __all__ = [
     "EventRecord",
     "NewRun",
     "PullRequestSummary",
+    "RecheckWatchRecord",
     "RunFilter",
     "RunRecord",
     "RunStats",
@@ -49,6 +50,7 @@ class NewRun:
     trigger: Trigger
     fingerprint: str = ""
     dry_run: bool = False
+    base_run_id: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -75,6 +77,7 @@ class RunRecord:
     finished_at: datetime | None
     dry_run: bool
     published: bool = False
+    base_run_id: int | None = None
 
     @classmethod
     def from_row(cls, row: sqlite3.Row | Mapping[str, Any]) -> Self:
@@ -124,6 +127,7 @@ class ScenarioRecord:
     tasks: tuple[str, ...] = ()
     error: str = ""
     partial: bool = False
+    reused_from: int | None = None
 
     @classmethod
     def from_row(cls, row: sqlite3.Row) -> Self:
@@ -184,6 +188,23 @@ class TaskWatchRecord:
     retry_after: datetime | None = None
     clear_since: datetime | None = None
     settled_status: str = ""
+
+
+@dataclass(frozen=True, slots=True)
+class RecheckWatchRecord:
+    """Сверка ответов «/recheck» на статусный комментарий PR.
+
+    ``comment_count`` — счётчик комментариев PR при последней сверке (``None`` — не
+    сверялись или Bitbucket его не отдаёт); ``last_reply_id`` — последний разобранный ответ.
+    """
+
+    project: str
+    repo: str
+    pr_id: int
+    comment_count: int | None = None
+    last_reply_id: int = 0
+    checked_at: datetime | None = None
+    retry_after: datetime | None = None
 
 
 @dataclass(frozen=True, slots=True)

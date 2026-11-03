@@ -322,3 +322,35 @@ def test_network_error() -> None:
     with pytest.raises(BitbucketError, match="сети") as caught:
         _run(responder, lambda client: client.list_review_prs())
     assert caught.value.status_code is None
+
+
+def test_get_comment_with_nested_replies() -> None:
+    nested = {"id": 3, "text": "/recheck", "createdDate": 5, "author": {"name": "a"}}
+    reply = {"id": 2, "text": "ok", "comments": [nested]}
+    comment, recorder = _run(
+        lambda request: httpx.Response(200, json={"id": 1, "comments": [reply]}),
+        lambda client: client.get_comment(make_pr(), 1),
+    )
+    path = "/rest/api/1.0/projects/PROJ/repos/repo/pull-requests/1/comments/1"
+    assert recorder.requests[0].url.path == path
+    assert [known.id for known in comment.all_replies()] == [2, 3]
+    assert comment.all_replies()[1].created_date == 5
+
+
+def test_add_reaction() -> None:
+    _, recorder = _run(
+        lambda request: httpx.Response(200, json={"emoticon": {"shortcut": "thumbsup"}}),
+        lambda client: client.add_reaction(make_pr(), 7, "thumbsup"),
+    )
+    request = recorder.requests[0]
+    assert request.method == "PUT"
+    assert request.url.path == (
+        "/rest/comment-likes/latest/projects/PROJ/repos/repo/pull-requests/1/comments/7"
+        "/reactions/thumbsup"
+    )
+
+
+def test_comment_count_from_properties() -> None:
+    assert make_pr().comment_count is None
+    pr = make_pr().model_copy(update={"properties": {"commentCount": 4}})
+    assert pr.comment_count == 4

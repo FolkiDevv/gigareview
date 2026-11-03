@@ -8,7 +8,15 @@ from gigareview.daemon import Daemon
 from gigareview.errors import GigaReviewError
 from gigareview.web.deps import AnyRequest, DaemonDep, StoreDep, back, redirect_with
 
-__all__ = ["pause", "poll_now", "reload_config", "rerun_pr", "rerun_run", "resume"]
+__all__ = [
+    "pause",
+    "poll_now",
+    "reload_config",
+    "rerun_failed",
+    "rerun_pr",
+    "rerun_run",
+    "resume",
+]
 
 
 @post("/actions/poll", name="poll_now", sync_to_thread=False)
@@ -52,8 +60,22 @@ async def rerun_run(
     """Повторить проверку PR этого прогона на текущем коммите PR."""
     run = store.runs.get(run_id)
     if run is None:
-        return redirect_with(back(request), error=f"Run #{run_id} not found")
+        return _missing(request, run_id)
     return await _rerun(request, daemon, run.project, run.repo, run.pr_id)
+
+
+@post("/runs/{run_id:int}/rerun-failed", name="rerun_failed")
+async def rerun_failed(
+    request: AnyRequest,
+    daemon: DaemonDep,
+    store: StoreDep,
+    run_id: FromPath[int],
+) -> Redirect:
+    """Повторить только упавшие сценарии прогона; итоги остальных переносятся."""
+    run = store.runs.get(run_id)
+    if run is None:
+        return _missing(request, run_id)
+    return await _rerun(request, daemon, run.project, run.repo, run.pr_id, base_run_id=run.id)
 
 
 @post("/prs/{project:str}/{repo:str}/{pr_id:int}/rerun", name="rerun_pr")
@@ -74,10 +96,17 @@ async def _rerun(
     project: str,
     repo: str,
     pr_id: int,
+    *,
+    base_run_id: int | None = None,
 ) -> Redirect:
     """Ставит PR в очередь и открывает новый прогон (ошибка — назад с сообщением)."""
     try:
-        run_id = await daemon.rerun(project, repo, pr_id)
+        run_id = await daemon.rerun(project, repo, pr_id, base_run_id=base_run_id)
     except GigaReviewError as error:
         return redirect_with(back(request), error=str(error))
     return redirect_with(f"/runs/{run_id}", notice="Check queued")
+
+
+def _missing(request: AnyRequest, run_id: int) -> Redirect:
+    """Прогона нет — назад с сообщением."""
+    return redirect_with(back(request), error=f"Run #{run_id} not found")
