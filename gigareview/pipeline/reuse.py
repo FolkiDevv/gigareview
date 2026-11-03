@@ -15,8 +15,13 @@ def reused_reports(
     store: Store,
     run: RunRecord,
     scenarios: Sequence[Scenario],
+    *,
+    fingerprint: str,
 ) -> tuple[ScenarioReport, ...]:
     """Итоги сценариев, которые прогон ``run`` берёт из базового прогона без выполнения.
+
+    ``fingerprint`` — отпечаток текущей конфигурации: её могли перечитать, пока прогон ждал
+    очереди, и тогда итоги прежних сценариев к новым не подходят.
 
     Переносятся сценарии, отработавшие без ошибки и до конца: прерванное ревью (``partial``)
     проверило не всё и выполняется заново. Пусто — выполняются все сценарии: прогон
@@ -28,7 +33,7 @@ def reused_reports(
     base = store.runs.get(run.base_run_id)
     if base is None or not base.published or base.commit_id != run.commit_id:
         return ()
-    if base.fingerprint != run.fingerprint:
+    if not base.fingerprint == run.fingerprint == fingerprint:
         return ()
     known = {scenario.name: scenario for scenario in scenarios}
     reports = tuple(

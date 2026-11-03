@@ -90,7 +90,12 @@ class Reviewer:
         repo = self.config.find_repo(pr.project, pr.repo)
         if run is None or repo is None:
             raise SetupError(f"Репозиторий {pr.project}/{pr.repo} не описан в конфигурации")
-        reused = reused_reports(self._store, run, self.config.scenarios_for(repo))
+        reused = reused_reports(
+            self._store,
+            run,
+            self.config.scenarios_for(repo),
+            fingerprint=self.config.fingerprint(repo),
+        )
         phases = _phases(_remaining(self.config.scenarios_for(repo), reused))
         if not phases:
             raise SetupError(f"Для {repo.key} не задано ни одного сценария")

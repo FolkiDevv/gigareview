@@ -368,13 +368,12 @@ def test_base_run_of_other_commit_is_not_reused(harness: Harness, store: Store) 
     record = store.runs.get(store.runs.create(run))
     assert record is not None
     scenarios = harness.config.scenarios_for(harness.config.repos[0])
-    assert reused_reports(store, record, scenarios) == ()
+    assert reused_reports(store, record, scenarios, fingerprint=fingerprint) == ()
     same = replace(run, commit_id=harness.pr.commit)
     same_record = store.runs.get(store.runs.create(same))
     assert same_record is not None
-    assert [report.scenario.name for report in reused_reports(store, same_record, scenarios)] == [
-        "lint",
-    ]
+    reused = reused_reports(store, same_record, scenarios, fingerprint=fingerprint)
+    assert [report.scenario.name for report in reused] == ["lint"]
 
 
 def test_partial_review_is_not_reused(harness: Harness, store: Store) -> None:
@@ -387,8 +386,22 @@ def test_partial_review_is_not_reused(harness: Harness, store: Store) -> None:
         record = ScenarioRecord(name, name, "simple", outcome, 0, "", 1.0, partial=partial)
         store.runs.add_scenario(base, position, record)
     store.runs.mark_published(base)
-    rerun = new_run(pr, Trigger.RECHECK, fingerprint="fp", dry_run=False, base_run_id=base)
-    run = store.runs.get(store.runs.create(rerun))
+    run = store.runs.get(
+        store.runs.create(
+            new_run(pr, Trigger.RECHECK, fingerprint="fp", dry_run=False, base_run_id=base),
+        ),
+    )
     assert run is not None
     scenarios = harness.config.scenarios_for(harness.config.repos[0])
-    assert [report.scenario.name for report in reused_reports(store, run, scenarios)] == ["lint"]
+    reused = reused_reports(store, run, scenarios, fingerprint="fp")
+    assert [report.scenario.name for report in reused] == ["lint"]
+
+
+def test_config_reloaded_while_queued_reruns_everything(harness: Harness, store: Store) -> None:
+    harness.reply()
+    harness.check()
+    lint = harness.config.scenarios["lint"]
+    harness.config.scenarios["lint"] = lint.model_copy(update={"run": f"{lint.run}; true"})
+    harness.finish_queued()
+    assert _lines(harness.lint_log) == 2
+    assert all(record.reused_from is None for record in store.runs.scenarios(harness.queued[0]))
