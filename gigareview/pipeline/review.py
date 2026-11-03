@@ -11,7 +11,7 @@ from gigareview.bitbucket import BitbucketApi, PullRequest
 from gigareview.config import Config, DaemonSettings, RepoConfig, Scenario, ScenarioKind
 from gigareview.errors import GigaReviewError, SetupError
 from gigareview.pipeline.incremental import history_env, scenario_history, settle
-from gigareview.pipeline.publish import Publisher, withdraw_approval
+from gigareview.pipeline.publish import Publisher, blocking_tasks, withdraw_approval
 from gigareview.pipeline.reuse import reused_reports
 from gigareview.pipeline.status import StatusBoard
 from gigareview.pipeline.tracking import TaskStates, fetch_task_states
@@ -273,8 +273,8 @@ class Reviewer:
             self._event(EventLevel.WARNING, f"{_pr_label(pr)}: {note}", run.id)
             return note
         states = await self._snapshot(progress, fresh)
-        # Открытая ручная таска пользователя демона — его замечание: PR не одобряется.
-        approve = progress.policy.approve and not states.manual
+        # Открытая ручная таска пользователя демона или таска бота — замечание: PR не одобряется.
+        approve = progress.policy.approve and not blocking_tasks(self._store, fresh, states)
         publisher = Publisher(self._api, self._store, run.id, states)
         await publisher.publish_tasks(fresh, phase_reports)
         await progress.board.show(fresh, progress.reports, pending, approve=approve)

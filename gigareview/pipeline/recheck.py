@@ -6,10 +6,11 @@
 ``max_rechecks`` раз на коммит. Принятая команда получает реакцию 👍, отклонённая — 👎, причина
 пишется в журнал.
 
-Запросов в покое нет: новый ответ виден по счётчику комментариев PR в списке опроса. Без
-счётчика статусный комментарий перечитывается раз в 5 минут, и только у PR, чьи проверки
-можно перезапустить: команда в остальных PR остаётся без ответа (👎 и записи в журнале нет) —
-иначе сверка стоила бы запроса раз в 5 минут на каждый PR.
+Запросов в покое нет: новый ответ виден по счётчику комментариев PR в списке опроса; для
+страховки PR, чьи проверки можно перезапустить, сверяется и раз в 30 минут. Без счётчика
+статусный комментарий перечитывается раз в 5 минут, и только у таких PR: команда в остальных
+PR остаётся без ответа (👎 и записи в журнале нет) — иначе сверка стоила бы запроса раз в
+5 минут на каждый PR.
 """
 
 from collections.abc import Callable, Sequence
@@ -37,6 +38,8 @@ type Enqueue = Callable[[PullRequest, int], int]
 #: Пауза после ошибки Bitbucket и период сверки без счётчика комментариев.
 _RETRY = timedelta(minutes=5)
 _FALLBACK = timedelta(minutes=5)
+#: Страховочная сверка со счётчиком: он не меняется, если комментарий удалили и добавили.
+_RECHECK = timedelta(hours=0.5)
 #: Прогон упал целиком — перезапускается полностью.
 _CRASHED = frozenset((RunStatus.ERROR, RunStatus.INTERRUPTED))
 _MILLISECONDS = 1000
@@ -93,11 +96,16 @@ class RecheckWatch:
         now: datetime,
         config: Config,
     ) -> bool:
-        """Сверка нужна: счётчик комментариев изменился; без счётчика — по расписанию."""
+        """Сверка нужна: счётчик комментариев изменился; иначе — по расписанию.
+
+        Счётчик может и не измениться (удалили один комментарий, добавили ответ), поэтому PR,
+        чьи проверки можно перезапустить, сверяется и раз в 30 минут; без счётчика — раз в 5.
+        """
         count = pr.comment_count
-        if count is not None:
-            return count != watch.comment_count
-        if watch.checked_at is not None and now - watch.checked_at < _FALLBACK:
+        if count is not None and count != watch.comment_count:
+            return True
+        period = _FALLBACK if count is None else _RECHECK
+        if watch.checked_at is not None and now - watch.checked_at < period:
             return False
         return self._verdict(pr, config).base_run_id is not None
 

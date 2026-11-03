@@ -15,7 +15,7 @@ from gigareview.pipeline import RecheckWatch, Reviewer, new_run
 from gigareview.pipeline import recheck as recheck_module
 from gigareview.pipeline.reuse import reused_reports
 from gigareview.statuses import EventLevel, Outcome, ReviewStatus, RunStatus, Trigger
-from gigareview.store import RunFilter, ScenarioRecord, Store
+from gigareview.store import CommentKind, RunFilter, ScenarioRecord, Store, TaskDetails
 
 _TASKS = '{"tasks": [{"text": "one"}]}'
 
@@ -426,3 +426,42 @@ def test_run_records_fingerprint_it_ran_with(harness: Harness, store: Store) -> 
     run = store.runs.get(harness.queued[0])
     assert run is not None
     assert run.fingerprint == harness.config.fingerprint(harness.config.repos[0])
+
+
+def test_reopened_task_of_reused_scenario_blocks_approval(
+    tmp_path: Path,
+    store: Store,
+    origin: Origin,
+) -> None:
+    reviewed = Harness(tmp_path, store, origin)
+    reviewed.config.scenarios["ai"] = reviewed.config.scenarios["ai"].model_copy(
+        update={"run": f"[ -f {reviewed.flag} ] || exit 2"},
+    )
+    base = reviewed.review()
+    assert reviewed.api.statuses == []
+    # Прежняя таска lint: бот её закрыл, а человек открыл заново.
+    task_id = reviewed.api.add_task(1, "old lint issue", author="me")
+    record_id = store.comments.add(base, task_id, 1, CommentKind.TASK, "lint", TaskDetails("old"))
+    store.comments.mark_resolved(record_id)
+    reviewed.flag.touch()
+    run_id = reviewed.review(Trigger.RECHECK, base)
+    assert store.runs.scenarios(run_id)[0].reused_from == base
+    assert reviewed.api.statuses == [(1, ReviewStatus.NEEDS_WORK)]
+    assert store.watch.is_held(run_id)
+    assert "PR одобрен" not in reviewed.api.status_texts[-1]
+
+
+def test_unchanged_comment_count_is_rechecked_periodically(
+    harness: Harness,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    now = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
+    monkeypatch.setattr(recheck_module, "utc_now", lambda: now)
+    harness.check()
+    # Счётчик тот же: один комментарий удалили, ответ с командой добавили.
+    add_reply(harness.api, harness.summary_id, "/recheck")
+    harness.check()
+    assert not harness.queued
+    now += timedelta(minutes=30)
+    harness.check()
+    assert len(harness.queued) == 1
