@@ -10,6 +10,7 @@ from gigareview.statuses import Outcome, ReviewStatus, RunStatus
 
 __all__ = [
     "RECHECK_COMMAND",
+    "cancelled_text",
     "crash_text",
     "guide_text",
     "overall_status",
@@ -41,6 +42,7 @@ _PARTIAL_LABEL = (
     "⏳ обычные проверки завершены, идут ИИ-сценарии — статус ревью будет поставлен после них"
 )
 _CRASH_LABEL = f"⚠️ прогон не удался {_DETAILS_NOTE} — статус ревью не изменён"
+_CANCELLED_LABEL = "⏹️ проверка прервана, итогов не будет — статус ревью не изменён"
 
 _STATUS_LABELS = MappingProxyType({
     RunStatus.PASSED: "✅ замечаний нет — PR одобрен",
@@ -153,6 +155,11 @@ def crash_text(
 ) -> str:
     """Статусный комментарий прогона, который упал (git, init, Bitbucket)."""
     return _finish(_header(commit), _CRASH_LABEL, run_url, policy or DaemonSettings(), hint)
+
+
+def cancelled_text(*, commit: str, run_url: str, policy: DaemonSettings | None = None) -> str:
+    """Статусный комментарий прогона, который отменили или прервали посреди проверок."""
+    return _finish(_header(commit), _CANCELLED_LABEL, run_url, policy or DaemonSettings(), "")
 
 
 def recheck_hint(policy: DaemonSettings, used: int) -> str:

@@ -13,6 +13,7 @@ from gigareview.config import DaemonSettings, Scenario
 from gigareview.errors import BitbucketError
 from gigareview.scenarios import (
     ScenarioReport,
+    cancelled_text,
     crash_text,
     recheck_hint,
     summary_table,
@@ -112,6 +113,17 @@ class StatusBoard:
                 policy=self._policy,
                 hint=self._hint(),
             )
+            await self._write(pr, text, "")
+
+    async def cancel(self, pr: PullRequest) -> None:
+        """Прогон отменён или прерван: комментарий больше не говорит «идут проверки».
+
+        Ошибка Bitbucket не важна: прогон всё равно завершается.
+        """
+        if self._comment is None:
+            return
+        with contextlib.suppress(BitbucketError):
+            text = cancelled_text(commit=pr.commit, run_url=self._run_url, policy=self._policy)
             await self._write(pr, text, "")
 
     def _hint(self) -> str:

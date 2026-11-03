@@ -2,13 +2,14 @@
 
 import asyncio
 import contextlib
-from collections import Counter, defaultdict
+from collections import Counter
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
 
 from gigareview.bitbucket import BitbucketApi, PullRequest
 from gigareview.config import Config, load_config
+from gigareview.daemon.queue import Job, RunQueue
 from gigareview.errors import GigaReviewError
 from gigareview.pipeline import RecheckWatch, Reviewer, TaskWatch, new_run
 from gigareview.statuses import EventLevel, RunStatus, Trigger
@@ -33,20 +34,16 @@ class DaemonStatus:
     last_error: str
     queue_size: int
     active_runs: tuple[int, ...]
+    queued_runs: tuple[int, ...]
     interval_minutes: float
     dry_run: bool
 
 
-@dataclass(frozen=True, slots=True)
-class _Job:
-    """Прогон в очереди."""
-
-    run_id: int
-    pr: PullRequest
-
-
 class Daemon:
-    """Опрашивает Bitbucket и выполняет прогоны; методы управления вызывает Web Dashboard."""
+    """Опрашивает Bitbucket и выполняет прогоны; методы управления вызывает Web Dashboard.
+
+    ``queue`` — очередь прогонов: Web Dashboard переставляет и отменяет прогоны через неё.
+    """
 
     def __init__(
         self,
@@ -63,11 +60,9 @@ class Daemon:
         self._reviewer = Reviewer(config, store, api)
         self._watch = TaskWatch(store, api)
         self._recheck = RecheckWatch(store, api)
-        self._queue: asyncio.Queue[_Job] = asyncio.Queue()
+        self.queue = RunQueue(store)
         self._wake = asyncio.Event()
         self._tasks: list[asyncio.Task[None]] = []
-        self._locks: defaultdict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
-        self._active: set[int] = set()
         self._last_error = ""
         self._next_poll: datetime | None = None
 
@@ -167,7 +162,7 @@ class Daemon:
             base_run_id=base_run_id,
         )
         run_id = self._store.runs.create(run)
-        self._queue.put_nowait(_Job(run_id, pr))
+        self.queue.put(Job(run_id, pr))
         self._event(EventLevel.NOTE, f"{repo.key}#{pr.id} поставлен в очередь ({trigger})", run_id)
         return run_id
 
@@ -194,14 +189,14 @@ class Daemon:
                     f"Прогон #{base_run_id} проверял не текущий коммит PR — повторите проверку "
                     "целиком",
                 )
-            crashed = base.status in {RunStatus.ERROR, RunStatus.INTERRUPTED}
+            crashed = base.status in {RunStatus.ERROR, RunStatus.INTERRUPTED, RunStatus.CANCELLED}
             if not crashed and not self._store.runs.has_errors(base_run_id):
                 raise GigaReviewError(f"В прогоне #{base_run_id} нет упавших сценариев")
         return self.enqueue(pr, Trigger.MANUAL, base_run_id=base_run_id)
 
     async def wait_idle(self) -> None:
         """Ждёт, пока очередь опустеет и все взятые прогоны завершатся."""
-        await self._queue.join()
+        await self.queue.join()
 
     def reload_config(self) -> None:
         """Перечитывает конфигурацию: сценарии, репозитории, период опроса.
@@ -241,8 +236,9 @@ class Daemon:
             last_poll=datetime.fromisoformat(last_poll) if last_poll else None,
             next_poll=self._next_poll,
             last_error=self._last_error,
-            queue_size=self._queue.qsize(),
-            active_runs=tuple(sorted(self._active)),
+            queue_size=len(self.queue.queued_ids()),
+            active_runs=self.queue.taken_ids(),
+            queued_runs=self.queue.queued_ids(),
             interval_minutes=self.config.daemon.interval_minutes,
             dry_run=self.config.daemon.dry_run,
         )
@@ -266,17 +262,13 @@ class Daemon:
     async def _worker(self) -> None:
         """Берёт прогоны из очереди; прогоны одного репозитория идут по очереди."""
         while True:
-            job = await self._queue.get()
-            pr = job.pr
-            async with self._locks[f"{pr.project}/{pr.repo}".casefold()]:
-                self._active.add(job.run_id)
-                try:
-                    await self._reviewer.review(job.run_id, pr)
-                # Сбой вне прогона (например, базы) не должен убивать воркер.
-                except Exception as error:
-                    self._event(EventLevel.ERROR, f"Воркер: {error!r}", job.run_id)
-                self._active.discard(job.run_id)
-            self._queue.task_done()
+            job = await self.queue.get()
+            try:
+                await self.queue.execute(job, self._reviewer.review)
+            # Сбой вне прогона (например, базы) не должен убивать воркер.
+            except Exception as error:
+                self._event(EventLevel.ERROR, f"Воркер: {error!r}", job.run_id)
+            self.queue.done()
 
     def _event(
         self,
