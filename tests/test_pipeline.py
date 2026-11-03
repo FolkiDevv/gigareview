@@ -741,3 +741,16 @@ def test_status_changed_while_queued_is_not_withdrawn(
     run_id = store.runs.create(new_run(listed, Trigger.AUTO, fingerprint="fp", dry_run=False))
     asyncio.run(Reviewer(config, store, api).review(run_id, listed))
     assert ReviewStatus.UNAPPROVED not in [status for _, status in api.statuses]
+
+
+def test_fixed_task_is_closed_before_summary_promises_approval(
+    tmp_path: Path,
+    store: Store,
+    origin: Origin,
+) -> None:
+    first, api = _review(tmp_path, store, origin, scenarios={"lint": {"run": "echo bad; exit 1"}})
+    assert first.status is RunStatus.ISSUES
+    run, api = _review(tmp_path, store, origin, api=api, scenarios={"lint": {"run": "true"}})
+    assert run.status is RunStatus.PASSED
+    assert api.statuses[-1] == (1, ReviewStatus.APPROVED)
+    assert "PR одобрен" in api.status_texts[-1]

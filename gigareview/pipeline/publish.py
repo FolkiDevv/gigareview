@@ -105,12 +105,13 @@ class Publisher:
         status: RunStatus,
         *,
         approve: bool = True,
-    ) -> None:
+    ) -> bool:
         """Все сценарии завершены: закрыть таски убранных сценариев, поставить статус ревью.
 
         Статус — по :func:`review_decision`: без ``approve`` APPROVED не ставится. Открытая
         ручная таска пользователя демона или таска бота (см. :func:`blocking_tasks`) — замечание:
         пройденный PR получает NEEDS_WORK, а наблюдение снимет его, когда таски закроют.
+        Возвращает, придержан ли PR открытыми тасками.
         """
         names = {report.scenario.name for report in reports}
         await self._resolve_previous(pr, (), lambda scenario: scenario not in names)
@@ -128,6 +129,7 @@ class Publisher:
         if held:
             # После статуса: не поставленный статус не должен подменить наблюдение прогона.
             self._store.watch.hold(pr.project, pr.repo, pr.id, self._run_id)
+        return held
 
     async def _post_tasks(self, pr: PullRequest, report: ScenarioReport) -> int:
         """Таски сценария с замечаниями; возвращает, сколько опубликовано."""

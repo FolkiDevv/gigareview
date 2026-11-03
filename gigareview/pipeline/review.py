@@ -11,7 +11,7 @@ from gigareview.bitbucket import BitbucketApi, PullRequest
 from gigareview.config import Config, DaemonSettings, RepoConfig, Scenario, ScenarioKind
 from gigareview.errors import GigaReviewError, SetupError
 from gigareview.pipeline.incremental import history_env, scenario_history, settle
-from gigareview.pipeline.publish import Publisher, blocking_tasks, withdraw_approval
+from gigareview.pipeline.publish import Publisher, withdraw_approval
 from gigareview.pipeline.reuse import reused_reports
 from gigareview.pipeline.status import StatusBoard
 from gigareview.pipeline.tracking import TaskStates, fetch_task_states
@@ -273,21 +273,12 @@ class Reviewer:
             self._event(EventLevel.WARNING, f"{_pr_label(pr)}: {note}", run.id)
             return note
         states = await self._snapshot(progress, fresh)
-        # Открытая ручная таска пользователя демона или таска бота — замечание: PR не одобряется.
-        approve = progress.policy.approve and not blocking_tasks(self._store, fresh, states)
         publisher = Publisher(self._api, self._store, run.id, states)
         await publisher.publish_tasks(fresh, phase_reports)
-        await progress.board.show(fresh, progress.reports, pending, approve=approve)
-        if not pending:
-            await publisher.finish(
-                fresh,
-                progress.reports,
-                overall_status(progress.reports),
-                approve=progress.policy.approve,
-            )
-            self._store.runs.mark_published(run.id)
-            if self._store.watch.is_held(run.id) or overall_status(progress.reports) in _WATCHED:
-                self._event(EventLevel.NOTE, _watch_note(pr, progress.policy), run.id)
+        if pending:
+            await progress.board.show(fresh, progress.reports, pending)
+            return ""
+        await _conclude(self._store, progress, publisher, fresh)
         return ""
 
     async def _snapshot(self, progress: "_Progress", fresh: PullRequest) -> TaskStates:
@@ -335,6 +326,29 @@ class _Progress:
     policy: DaemonSettings
     reports: list[ScenarioReport] = field(default_factory=list)
     states: TaskStates | None = None
+
+
+async def _conclude(
+    store: Store,
+    progress: "_Progress",
+    publisher: Publisher,
+    fresh: PullRequest,
+) -> None:
+    """Последний этап опубликован: статус ревью, итог статусного комментария, наблюдение.
+
+    Итог — после статуса: таски уже закрыты, и известно, держат ли PR открытые таски.
+    """
+    run = progress.run
+    held = await publisher.finish(
+        fresh,
+        progress.reports,
+        overall_status(progress.reports),
+        approve=progress.policy.approve,
+    )
+    await progress.board.show(fresh, progress.reports, approve=not held)
+    store.runs.mark_published(run.id)
+    if store.watch.is_held(run.id) or overall_status(progress.reports) in _WATCHED:
+        store.events.add(EventLevel.NOTE, _watch_note(progress.pr, progress.policy), run.id)
 
 
 def _phases(scenarios: Sequence[Scenario]) -> _Phases:
