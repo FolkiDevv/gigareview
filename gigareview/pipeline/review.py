@@ -1,8 +1,9 @@
 """Прогон ревью одного коммита PR от подготовки копии до публикации итогов."""
 
 import asyncio
+import contextlib
 import tempfile
-from collections.abc import Sequence
+from collections.abc import Awaitable, Sequence
 from dataclasses import dataclass, field, replace
 from itertools import chain
 from pathlib import Path
@@ -30,6 +31,8 @@ _WATCHED = frozenset((RunStatus.ISSUES, RunStatus.FAILED))
 #: Сколько символов ошибки сценария показывать в журнале (полная — на странице прогона).
 _ERROR_CHARS = 200
 _SHORT_COMMIT = 10
+#: Сколько ждать Bitbucket, чтобы снять «идут проверки» с отменённого прогона.
+_CANCEL_NOTE_SECONDS = 10
 #: Этапы прогона: сценарии каждого этапа по порядку.
 type _Phases = list[tuple[Scenario, ...]]
 
@@ -121,11 +124,7 @@ class Reviewer:
             # Сообщение — сразу, до подготовки копии: долгие ИИ-сценарии не должны
             # выглядеть так, будто PR никто не проверяет.
             await board.show(pr, progress.reports, pending=tuple(chain.from_iterable(phases)))
-            try:
-                note = await self._run_phases(progress, repo, phases)
-            except Exception:
-                await board.fail(pr)
-                raise
+            note = await _supervised(board, pr, self._run_phases(progress, repo, phases))
         return overall_status(progress.reports), note
 
     def _plan(
@@ -349,6 +348,25 @@ async def _conclude(
     store.runs.mark_published(run.id)
     if store.watch.is_held(run.id) or overall_status(progress.reports) in _WATCHED:
         store.events.add(EventLevel.NOTE, _watch_note(progress.pr, progress.policy), run.id)
+
+
+async def _supervised(board: StatusBoard, pr: PullRequest, phases: Awaitable[str]) -> str:
+    """Сценарии прогона; упали или отменены — комментарий PR больше не говорит «идут проверки»."""
+    try:
+        return await phases
+    except asyncio.CancelledError:
+        await _cancel_note(board, pr)
+        raise
+    except Exception:
+        await board.fail(pr)
+        raise
+
+
+async def _cancel_note(board: StatusBoard, pr: PullRequest) -> None:
+    """Отменённый прогон снимает «идут проверки» в PR; зависший Bitbucket его не держит."""
+    with contextlib.suppress(TimeoutError):
+        async with asyncio.timeout(_CANCEL_NOTE_SECONDS):
+            await board.cancel(pr)
 
 
 def _phases(scenarios: Sequence[Scenario]) -> _Phases:

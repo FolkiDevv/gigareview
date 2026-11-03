@@ -325,10 +325,10 @@ def test_cancellation_marks_interrupted(tmp_path: Path, store: Store, origin: Or
     pr = make_pr(commit=origin.feature)
     run_id = store.runs.create(new_run(pr, Trigger.MANUAL, fingerprint="", dry_run=False))
 
+    api = FakeBitbucket(prs=[pr])
+
     async def scenario() -> None:
-        task = asyncio.create_task(
-            Reviewer(config, store, FakeBitbucket(prs=[pr])).review(run_id, pr),
-        )
+        task = asyncio.create_task(Reviewer(config, store, api).review(run_id, pr))
         await asyncio.sleep(0.5)
         task.cancel()
         with pytest.raises(asyncio.CancelledError):
@@ -338,6 +338,8 @@ def test_cancellation_marks_interrupted(tmp_path: Path, store: Store, origin: Or
     run = store.runs.get(run_id)
     assert run is not None
     assert run.status is RunStatus.INTERRUPTED
+    # Статусный комментарий больше не говорит «идут проверки».
+    assert "прервана" in api.comments[-1].text
 
 
 def _incremental(run: str) -> dict[str, Any]:

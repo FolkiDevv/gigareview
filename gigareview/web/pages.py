@@ -9,6 +9,7 @@ from litestar.params import FromPath, FromQuery
 from litestar.response import Redirect, Template
 
 from gigareview.config import Config, Scenario
+from gigareview.daemon import DaemonStatus
 from gigareview.pipeline import review_order
 from gigareview.statuses import EventLevel, Outcome, RunStatus
 from gigareview.store import RunFilter, RunRecord, ScenarioRecord
@@ -43,12 +44,14 @@ def overview(
     notice: FromQuery[str] = "",
     error: FromQuery[str] = "",
 ) -> Template:
-    """Обзор: состояние демона, сводка за сутки и всего, последние прогоны и ошибки."""
+    """Обзор: состояние демона, очередь, сводка за сутки и всего, последние прогоны и ошибки."""
+    status = daemon.status()
     return _page(
         "overview.html",
         notice=notice,
         error=error,
-        status=daemon.status(),
+        status=status,
+        queue=_queue(status, store.queries.active_runs()),
         day=store.queries.stats(since=utc_now() - _DAY),
         total=store.queries.stats(),
         runs=store.queries.runs(RunFilter(), limit=_RECENT),
@@ -105,6 +108,7 @@ def run_page(
         notice=notice,
         error=error,
         run=run,
+        daemon_status=daemon.status(),
         scenarios=scenarios,
         upcoming=_upcoming(daemon.config, run, scenarios),
         comments=store.comments.for_run(run_id),
@@ -165,8 +169,22 @@ def api_status(daemon: DaemonDep, store: StoreDep) -> dict[str, Any]:
         "last_error": status.last_error,
         "queue_size": status.queue_size,
         "active_runs": list(status.active_runs),
+        "queued_runs": list(status.queued_runs),
         "runs": {str(key): count for key, count in stats.by_status.items()},
     }
+
+
+def _queue(status: DaemonStatus, active: list[RunRecord]) -> list[RunRecord]:
+    """Активные прогоны в порядке выполнения: идущие, взятые воркерами, затем очередь.
+
+    Прогоны, которых нет в очереди демона (например, запущенные из командной строки), — в конце.
+    """
+    order = {run_id: index for index, run_id in enumerate(status.active_runs + status.queued_runs)}
+    last = len(order)
+    return sorted(
+        active,
+        key=lambda run: (run.status is not RunStatus.RUNNING, order.get(run.id, last), run.id),
+    )
 
 
 def _upcoming(

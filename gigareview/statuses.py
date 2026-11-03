@@ -25,6 +25,7 @@ class RunStatus(StrEnum):
     FAILED = "failed"  # замечаний нет, но сценарии завершились ошибкой
     ERROR = "error"  # сбой самого прогона: git, init, Bitbucket
     INTERRUPTED = "interrupted"  # демон остановлен посреди прогона
+    CANCELLED = "cancelled"  # отменён из Web Dashboard
 
     @property
     def is_active(self) -> bool:

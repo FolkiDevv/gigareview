@@ -375,3 +375,81 @@ def test_watch_record_roundtrip(store: Store) -> None:
     store.watch.save(saved)
     assert store.watch.get("PROJ", "repo", 1, run_id) == saved
     assert store.watch.get("PROJ", "repo", 1, other) == TaskWatchRecord("PROJ", "repo", 1, other)
+
+
+def _finished(
+    store: Store,
+    status: RunStatus,
+    pr_id: int = 1,
+    *,
+    published: bool = False,
+    commit: str = "old",
+) -> int:
+    run_id = store.runs.create(_new(pr_id, commit))
+    store.runs.finish(run_id, status)
+    if published:
+        store.runs.mark_published(run_id)
+    return run_id
+
+
+def _history(store: Store) -> tuple[list[int], list[int]]:
+    """Прогоны, которые очистка должна сохранить, и прогоны, которые она удалит."""
+    kept = [_finished(store, RunStatus.ISSUES, published=True)]
+    store.comments.add(kept[-1], 1, 0, CommentKind.TASK, "lint")
+    dropped = [_finished(store, RunStatus.ERROR)]
+    store.events.add(EventLevel.ERROR, "сбой", dropped[-1])
+    kept.append(_finished(store, RunStatus.PASSED, published=True))
+    store.runs.add_scenario(kept[-1], 0, _scenario())
+    kept.append(_finished(store, RunStatus.INTERRUPTED))
+    store.comments.add(kept[-1], 2, 0, CommentKind.SUMMARY)
+    dropped.append(_finished(store, RunStatus.FAILED))
+    store.comments.mark_resolved(store.comments.add(dropped[-1], 3, 0, CommentKind.TASK))
+    kept.append(_finished(store, RunStatus.ISSUES))
+    store.comments.mark_dismissed(store.comments.add(kept[-1], 4, 0, CommentKind.TASK, "ai"))
+    return kept + _latest(store), dropped
+
+
+def _latest(store: Store) -> list[int]:
+    """Прогоны текущих коммитов, последние прогоны PR и прогон под наблюдением."""
+    # Прогоны текущего коммита держат счётчики попыток и «/recheck».
+    kept = [
+        _finished(store, RunStatus.ERROR, commit="new"),
+        store.runs.create(_new(commit="new")),
+        _finished(store, RunStatus.PASSED, pr_id=2),
+        _finished(store, RunStatus.ISSUES, pr_id=3),
+    ]
+    store.watch.save(TaskWatchRecord("PROJ", "repo", 3, kept[-1]))
+    _finished(store, RunStatus.PASSED, pr_id=3, commit="new")
+    return kept
+
+
+def test_purge_keeps_runs_the_daemon_relies_on(store: Store) -> None:
+    kept, dropped = _history(store)
+    future = utc_now() + timedelta(days=1)
+    assert store.queries.stale(utc_now() - timedelta(days=1)) == 0
+    assert store.queries.stale(future) == len(dropped)
+    assert store.queries.purge(future) == len(dropped)
+    assert all(store.runs.get(run_id) is None for run_id in dropped)
+    assert all(store.runs.get(run_id) is not None for run_id in kept)
+    assert [event.run_id for event in store.events.list()] == [None]
+    assert store.queries.purge(future) == 0
+
+
+def test_purge_events(store: Store) -> None:
+    store.events.add(EventLevel.NOTE, "старое")
+    store.events.add(EventLevel.ERROR, "тоже старое")
+    assert store.events.stale(utc_now() - timedelta(days=1)) == 0
+    future = utc_now() + timedelta(days=1)
+    assert store.events.stale(future) == 2
+    assert store.events.purge(future) == 2
+    assert store.events.count() == 0
+
+
+def test_active_runs(store: Store) -> None:
+    done = store.runs.create(_new())
+    store.runs.finish(done, RunStatus.CANCELLED)
+    running = store.runs.create(_new())
+    store.runs.mark_running(running)
+    queued = store.runs.create(_new())
+    assert [run.id for run in store.queries.active_runs()] == [running, queued]
+    assert store.runs.should_skip("PROJ", "repo", 1, "abc", dry_run=False)

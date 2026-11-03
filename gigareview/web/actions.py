@@ -1,4 +1,4 @@
-"""Действия Web Dashboard (POST, под CSRF-защитой): опрос, пауза, повтор, перечитать конфиг."""
+"""Действия Web Dashboard (POST, под CSRF-защитой): опрос, пауза, повтор, отмена, конфиг."""
 
 from litestar import post
 from litestar.params import FromPath
@@ -9,8 +9,11 @@ from gigareview.errors import GigaReviewError
 from gigareview.web.deps import AnyRequest, DaemonDep, StoreDep, back, redirect_with
 
 __all__ = [
+    "cancel_queued",
+    "cancel_run",
     "pause",
     "poll_now",
+    "prioritize_run",
     "reload_config",
     "rerun_failed",
     "rerun_pr",
@@ -23,21 +26,21 @@ __all__ = [
 def poll_now(request: AnyRequest, daemon: DaemonDep) -> Redirect:
     """Опросить Bitbucket сейчас."""
     daemon.poll_now()
-    return redirect_with(back(request), notice="Bitbucket poll started")
+    return _back(request, notice="Bitbucket poll started")
 
 
 @post("/actions/pause", name="pause", sync_to_thread=False)
 def pause(request: AnyRequest, daemon: DaemonDep) -> Redirect:
     """Приостановить опрос."""
     daemon.set_paused(paused=True)
-    return redirect_with(back(request), notice="Polling paused")
+    return _back(request, notice="Polling paused")
 
 
 @post("/actions/resume", name="resume", sync_to_thread=False)
 def resume(request: AnyRequest, daemon: DaemonDep) -> Redirect:
     """Возобновить опрос."""
     daemon.set_paused(paused=False)
-    return redirect_with(back(request), notice="Polling resumed")
+    return _back(request, notice="Polling resumed")
 
 
 @post("/actions/reload", name="reload_config", sync_to_thread=False)
@@ -46,8 +49,36 @@ def reload_config(request: AnyRequest, daemon: DaemonDep) -> Redirect:
     try:
         daemon.reload_config()
     except GigaReviewError as error:
-        return redirect_with(back(request), error=str(error))
-    return redirect_with(back(request), notice="Configuration reloaded")
+        return _back(request, error=str(error))
+    return _back(request, notice="Configuration reloaded")
+
+
+@post("/actions/cancel-queued", name="cancel_queued", sync_to_thread=False)
+def cancel_queued(request: AnyRequest, daemon: DaemonDep) -> Redirect:
+    """Отменить все прогоны, которые ждут в очереди."""
+    cancelled = daemon.queue.cancel_queued()
+    return _back(request, notice=f"Queued runs cancelled: {cancelled}")
+
+
+@post("/runs/{run_id:int}/cancel", name="cancel_run", sync_to_thread=False)
+def cancel_run(request: AnyRequest, daemon: DaemonDep, run_id: FromPath[int]) -> Redirect:
+    """Снять прогон с очереди или прервать выполняющийся."""
+    try:
+        removed = daemon.queue.cancel(run_id)
+    except GigaReviewError as error:
+        return _back(request, error=str(error))
+    notice = "Run cancelled" if removed else "Cancellation requested"
+    return _back(request, notice=notice)
+
+
+@post("/runs/{run_id:int}/prioritize", name="prioritize_run", sync_to_thread=False)
+def prioritize_run(request: AnyRequest, daemon: DaemonDep, run_id: FromPath[int]) -> Redirect:
+    """Перенести ожидающий прогон в начало очереди."""
+    try:
+        daemon.queue.prioritize(run_id)
+    except GigaReviewError as error:
+        return _back(request, error=str(error))
+    return _back(request, notice="Run moved to the front of the queue")
 
 
 @post("/runs/{run_id:int}/rerun", name="rerun_run")
@@ -103,10 +134,15 @@ async def _rerun(
     try:
         run_id = await daemon.rerun(project, repo, pr_id, base_run_id=base_run_id)
     except GigaReviewError as error:
-        return redirect_with(back(request), error=str(error))
+        return _back(request, error=str(error))
     return redirect_with(f"/runs/{run_id}", notice="Check queued")
+
+
+def _back(request: AnyRequest, *, notice: str = "", error: str = "") -> Redirect:
+    """Назад на страницу, с которой пришёл запрос, с сообщением."""
+    return redirect_with(back(request), notice=notice, error=error)
 
 
 def _missing(request: AnyRequest, run_id: int) -> Redirect:
     """Прогона нет — назад с сообщением."""
-    return redirect_with(back(request), error=f"Run #{run_id} not found")
+    return _back(request, error=f"Run #{run_id} not found")

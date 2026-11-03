@@ -74,6 +74,19 @@ class EventRepository:
         row = self._db.execute(f"SELECT count(*) FROM events {where}", args).fetchone()  # noqa: S608
         return int(row[0])
 
+    def stale(self, before: datetime) -> int:
+        """Сколько записей удалит :meth:`purge` с тем же ``before``."""
+        row = self._db.execute(
+            "SELECT count(*) FROM events WHERE created_at < ?",
+            (stamp(before),),
+        ).fetchone()
+        return int(row[0])
+
+    def purge(self, before: datetime) -> int:
+        """Удаляет записи, сделанные до ``before``."""
+        cursor = self._db.execute("DELETE FROM events WHERE created_at < ?", (stamp(before),))
+        return cursor.rowcount
+
 
 def _where(level: EventLevel | None) -> tuple[str, tuple[str, ...]]:
     """Условие ``WHERE`` по уровню и его аргументы."""
