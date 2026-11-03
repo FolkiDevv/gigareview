@@ -92,6 +92,12 @@ def _lines(path: Path) -> int:
     return len(path.read_text(encoding="utf-8").splitlines())
 
 
+def _status(store: Store, run_id: int) -> RunStatus:
+    run = store.runs.get(run_id)
+    assert run is not None
+    return run.status
+
+
 def _notes(store: Store) -> list[str]:
     return [event.message for event in store.events.list(EventLevel.NOTE, limit=200)]
 
@@ -99,7 +105,7 @@ def _notes(store: Store) -> list[str]:
 @pytest.fixture
 def harness(tmp_path: Path, store: Store, origin: Origin) -> Harness:
     reviewed = Harness(tmp_path, store, origin)
-    assert store.runs.get(reviewed.review()).status is RunStatus.FAILED  # type: ignore[union-attr]
+    assert _status(store, reviewed.review()) is RunStatus.FAILED
     return reviewed
 
 
@@ -128,7 +134,7 @@ def test_recheck_reruns_only_failed_scenarios(harness: Harness, store: Store) ->
         ("lint", Outcome.PASSED, 1),
         ("ai", Outcome.ISSUES, None),
     ]
-    assert store.runs.get(run_id).status is RunStatus.ISSUES  # type: ignore[union-attr]
+    assert _status(store, run_id) is RunStatus.ISSUES
     assert [task.text for task in harness.api.tasks] == ["**gigareview · ai**\n\none"]
     assert harness.api.statuses == [(1, ReviewStatus.NEEDS_WORK)]
     summary = harness.api.status_texts[-1]
@@ -150,7 +156,7 @@ def test_reused_tasks_stay_open_and_chain_to_origin(
     )
     reviewed.config = config
     base = reviewed.review()
-    assert store.runs.get(base).status is RunStatus.ISSUES  # type: ignore[union-attr]
+    assert _status(store, base) is RunStatus.ISSUES
     tasks = [task.id for task in reviewed.api.tasks]
     first = reviewed.review(Trigger.RECHECK, base)
     second = reviewed.review(Trigger.RECHECK, first)
