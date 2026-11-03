@@ -57,6 +57,40 @@
   {% if status.last_error %}<div class="flash bad">{{ status.last_error }}</div>{% endif %}
 
   <section>
+    <h2>Queue
+      {% if status.queued_runs %}<span class="more">{{ action("/actions/cancel-queued", "Cancel all queued", csrf_input, "danger compact", "Cancel all " ~ status.queued_runs | length ~ " queued runs?") }}</span>{% endif %}
+    </h2>
+    <div class="table-wrap">
+    <table class="grid">
+      <thead>
+        <tr><th>#</th><th>PR</th><th>Commit</th><th>Status</th><th>Trigger</th><th>Created</th><th></th></tr>
+      </thead>
+      <tbody>
+      {% for run in queue %}
+        <tr>
+          <td><a href="/runs/{{ run.id }}">#{{ run.id }}</a></td>
+          <td>
+            {% if run.pr_url %}<a href="{{ run.pr_url }}" target="_blank" rel="noopener">{{ run.repo_key }}#{{ run.pr_id }}</a>{% else %}{{ run.repo_key }}#{{ run.pr_id }}{% endif %}
+            <div class="muted small ellipsis">{{ run.pr_title }}</div>
+          </td>
+          <td class="mono">{{ run.short_commit }}</td>
+          <td>{{ badge(run.status) }}{% if run.dry_run %} <span class="tag">dry-run</span>{% endif %}</td>
+          <td>{{ run.trigger }}</td>
+          <td class="nowrap">{{ run.created_at | when }}</td>
+          <td class="nowrap">
+            {% if run.id in status.queued_runs and run.id != status.queued_runs[0] %}{{ action("/runs/" ~ run.id ~ "/prioritize", "Run next", csrf_input, "compact") }}{% endif %}
+            {% if run.id in status.queued_runs or run.id in status.active_runs %}{{ action("/runs/" ~ run.id ~ "/cancel", "Cancel", csrf_input, "danger compact", "Cancel run #" ~ run.id ~ "?") }}{% endif %}
+          </td>
+        </tr>
+      {% else %}
+        <tr><td colspan="7" class="empty">Queue is empty</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    </div>
+  </section>
+
+  <section>
     <h2>Recent runs <a class="more" href="/runs">all →</a></h2>
     {{ runs_table(runs) }}
   </section>

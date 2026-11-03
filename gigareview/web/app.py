@@ -16,7 +16,7 @@ from litestar.template.config import TemplateConfig
 
 from gigareview.daemon import Daemon
 from gigareview.store import Store
-from gigareview.web import actions, pages
+from gigareview.web import actions, maintenance, pages
 from gigareview.web.auth import TokenGuard, login, login_page
 from gigareview.web.deps import AnyRequest, back, back_target, redirect_with
 from gigareview.web.formatting import FILTERS
@@ -61,6 +61,12 @@ def create_app(daemon: Daemon, store: Store, *, csrf_secret: str = "") -> Litest
             actions.rerun_run,
             actions.rerun_failed,
             actions.rerun_pr,
+            actions.cancel_run,
+            actions.prioritize_run,
+            actions.cancel_queued,
+            maintenance.maintenance_page,
+            maintenance.purge_runs,
+            maintenance.purge_events,
             create_static_files_router(path="/static", directories=[_HERE / "static"]),
         ],
         dependencies={

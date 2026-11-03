@@ -2,8 +2,8 @@
 <span class="badge s-{{ status }}">{{ status | status_label }}</span>
 {%- endmacro %}
 
-{% macro action(url, label, csrf_input, kind="") -%}
-<form method="post" action="{{ url }}" class="inline">
+{% macro action(url, label, csrf_input, kind="", confirm="") -%}
+<form method="post" action="{{ url }}" class="inline"{% if confirm %} onsubmit="return confirm({{ confirm | tojson | forceescape }})"{% endif %}>
   {{ csrf_input | safe }}
   <button type="submit" class="btn {{ kind }}">{{ label }}</button>
 </form>

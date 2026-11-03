@@ -68,6 +68,9 @@ main { max-width: 1280px; margin: 0 auto; padding: 24px; }
   border: 1px solid var(--line); background: var(--panel); color: var(--text); display: inline-block; }
 .btn:hover { border-color: var(--accent); text-decoration: none; }
 .btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-text); }
+.btn.danger { color: var(--bad); }
+.btn.danger:hover { border-color: var(--bad); }
+.btn.compact { padding: 3px 10px; font-size: 13px; }
 
 .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 12px; margin-bottom: 8px; }
 .card { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 14px 16px; min-width: 0; }
@@ -88,7 +91,7 @@ table.grid { width: 100%; border-collapse: collapse; }
   background: var(--idle-bg); color: var(--idle); white-space: nowrap; }
 .s-passed { background: var(--ok-bg); color: var(--ok); }
 .s-issues, .s-error { background: var(--bad-bg); color: var(--bad); }
-.s-failed, .s-warning, .s-interrupted { background: var(--warn-bg); color: var(--warn); }
+.s-failed, .s-warning, .s-interrupted, .s-cancelled { background: var(--warn-bg); color: var(--warn); }
 .s-running, .s-queued { background: var(--idle-bg); color: var(--accent); }
 .tag { display: inline-block; padding: 0 7px; border-radius: 6px; font-size: 12px; background: var(--idle-bg); color: var(--idle); margin: 1px 0; }
 

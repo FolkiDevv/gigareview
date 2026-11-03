@@ -80,7 +80,9 @@ Litestar, uvicorn and Jinja are imported only by `web` and `cli` (a second contr
   `serve` runs the `Daemon` and the Litestar app under one uvicorn event loop.
 - `daemon/service.py` — the poll loop (`poll` every `interval_minutes`, or at once on
   `poll_now`) enqueues PR commits that `store.runs.should_skip` has not seen; workers run
-  `pipeline.Reviewer.review`, one run per repository at a time.
+  `pipeline.Reviewer.review`, one run per repository at a time. `daemon/queue.py:RunQueue`
+  (`Daemon.queue`) holds the order and runs each taken job as its own task, so the dashboard can
+  prioritize and cancel queued and running runs (status `cancelled`, which polling skips).
 - `pipeline/review.py` — workspace (`pipeline/workspace.py`: `gitops.GitRepo` clone/fetch/switch,
   then `init`), scenarios one by one (`scenarios/runner.py`: run → validate → format, exit codes
   0/1/other), then `pipeline/publish.py` resolves the previous tasks, posts tasks and the summary

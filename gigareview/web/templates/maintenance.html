@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% set section = "maintenance" %}
+{% block title %}Maintenance{% endblock %}
+{% block content %}
+<section class="head"><h1>Maintenance</h1></section>
+
+<h2>Old runs</h2>
+<p class="muted">
+  Deletes finished runs older than the given number of days together with their scenario output and
+  stored Bitbucket comments. Runs the daemon still relies on are kept: the latest and the latest
+  published run of each PR, the latest published run of each scenario, the owner of the PR status
+  comment, runs with open tasks and runs being watched. Older than {{ default_days }} days now:
+  <b>{{ stale_runs }}</b>.
+</p>
+<form class="filters" method="post" action="/maintenance/purge-runs" onsubmit="return confirm('Delete old runs?')">
+  {{ csrf_input | safe }}
+  <label>Older than, days <input type="number" name="days" min="1" value="{{ default_days }}" required></label>
+  <button class="btn danger" type="submit">Delete runs</button>
+</form>
+
+<h2>Old log entries</h2>
+<p class="muted">Deletes daemon log entries older than the given number of days. Older than {{ default_days }} days now: <b>{{ stale_events }}</b>.</p>
+<form class="filters" method="post" action="/maintenance/purge-events" onsubmit="return confirm('Delete old log entries?')">
+  {{ csrf_input | safe }}
+  <label>Older than, days <input type="number" name="days" min="1" value="{{ default_days }}" required></label>
+  <button class="btn danger" type="submit">Delete log entries</button>
+</form>
+{% endblock %}

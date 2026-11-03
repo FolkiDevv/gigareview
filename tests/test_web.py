@@ -168,6 +168,7 @@ def test_api_status(client: Client, store: Store) -> None:
     status = client.get("/api/status").json()
     assert status["paused"] is False
     assert status["runs"] == {"issues": 1}
+    assert status["queued_runs"] == []
 
 
 def test_static_htmx_is_served(client: Client) -> None:
@@ -446,3 +447,62 @@ def test_rerun_failed_without_failures_is_refused(client: Client, store: Store) 
     response = client.post(url, headers=headers, follow_redirects=False)
     assert "error=" in response.headers["location"]
     assert len(store.queries.runs(RunFilter())) == 1
+
+
+def test_queue_on_overview_and_run_page(client: Client, daemon: Daemon, store: Store) -> None:
+    assert "Queue is empty" in client.get("/").text
+    first = daemon.enqueue(make_pr(1), Trigger.MANUAL)
+    second = daemon.enqueue(make_pr(3), Trigger.MANUAL)
+    overview = client.get("/").text
+    assert "Cancel all queued" in overview
+    assert f"/runs/{second}/prioritize" in overview
+    assert f"/runs/{first}/prioritize" not in overview
+    assert f"/runs/{first}/cancel" in overview
+    run_page = client.get(f"/runs/{first}").text
+    assert f"/runs/{first}/prioritize" in run_page
+    assert f"/runs/{first}/cancel" in run_page
+    assert client.get("/api/status").json()["queued_runs"] == [first, second]
+
+
+def test_cancel_and_prioritize_actions(client: Client, daemon: Daemon, store: Store) -> None:
+    first = daemon.enqueue(make_pr(1), Trigger.MANUAL)
+    second = daemon.enqueue(make_pr(3), Trigger.MANUAL)
+    third = daemon.enqueue(make_pr(4), Trigger.MANUAL)
+    headers = _csrf(client)
+    moved = client.post(f"/runs/{third}/prioritize", headers=headers, follow_redirects=False)
+    assert "notice=" in moved.headers["location"]
+    assert daemon.status().queued_runs == (third, first, second)
+    cancelled = client.post(f"/runs/{first}/cancel", headers=headers)
+    assert "Run cancelled" in cancelled.text
+    run = store.runs.get(first)
+    assert run is not None
+    assert run.status is RunStatus.CANCELLED
+    again = client.post(f"/runs/{first}/cancel", headers=headers, follow_redirects=False)
+    assert "error=" in again.headers["location"]
+    missing = client.post("/runs/999/prioritize", headers=headers, follow_redirects=False)
+    assert "error=" in missing.headers["location"]
+    everything = client.post("/actions/cancel-queued", headers=headers)
+    assert "Queued runs cancelled: 2" in everything.text
+    assert not daemon.status().queued_runs
+
+
+def test_maintenance_page_and_purge(client: Client, store: Store) -> None:
+    _seed(store)
+    page = client.get("/maintenance")
+    assert page.status_code == 200
+    assert "Delete runs" in page.text
+    headers = _csrf(client)
+    # Записи свежие: при сроке в день удалять нечего.
+    kept = client.post("/maintenance/purge-runs", headers=headers, data={"days": "1"})
+    assert "Runs deleted: 0" in kept.text
+    for days in ("0", "soon"):
+        bad = client.post(
+            "/maintenance/purge-events",
+            headers=headers,
+            data={"days": days},
+            follow_redirects=False,
+        )
+        assert bad.headers["location"].startswith("/maintenance?error=")
+    logs = client.post("/maintenance/purge-events", headers=headers, data={"days": "1"})
+    assert "Log entries deleted: 0" in logs.text
+    assert store.events.count() == 1
