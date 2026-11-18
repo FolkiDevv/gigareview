@@ -1,0 +1,29 @@
+---
+# https://docs.github.com/code-security/dependabot/working-with-dependabot/dependabot-options-reference
+version: 2
+
+updates:
+  # Python-зависимости: pyproject.toml и uv.lock.
+  - package-ecosystem: uv
+    directory: /
+    schedule:
+      interval: weekly
+    # Заголовки PR в стиле conventional commits: `build(deps): …`, `build(deps-dev): …`.
+    commit-message:
+      prefix: build
+      include: scope
+    # Минорные и патч-обновления — одним PR; мажорные остаются отдельными PR.
+    groups:
+      python:
+        update-types: [minor, patch]
+
+  # Действия в .github/workflows.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: ci
+    groups:
+      actions:
+        update-types: [minor, patch]
