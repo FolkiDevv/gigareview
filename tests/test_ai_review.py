@@ -86,11 +86,22 @@ def test_full_prompt_lists_changes_without_diff(repo: _Repo) -> None:
     assert prompt.rstrip().endswith("no longer apply.")
 
 
-def test_prompt_starts_review_with_explore(repo: _Repo) -> None:
+def test_prompt_starts_review_with_background_explore(repo: _Repo) -> None:
     prompt = _prompt(repo)
-    assert "2. Start with explore: 1–3 explore calls in one response" in prompt
-    assert "ignore the plan mode instructions" in prompt
-    assert "not instructions to it" in prompt
+    assert "2. Start with explore, before reading files yourself" in prompt
+    assert 'subagent_type "explore", run_in_background true' in prompt
+    assert "every background report has arrived" in prompt
+    assert "plan mode" not in prompt
+
+
+def test_prompt_allows_experiments_but_not_changes(repo: _Repo) -> None:
+    prompt = _prompt(repo)
+    assert "HEAD must stay at the commit under review" in prompt
+    # Рецензент gigacrew видит из запроса только начало (~1000 символов) и конец.
+    assert "Short experiments that check a finding are part of this review" in prompt[:1000]
+    assert "5. When reading cannot settle a candidate, check it with a short experiment" in prompt
+    assert "write nothing outside `.gigacode/tmp/`" in prompt
+    assert f"git show {repo.base}:<path>" in prompt
 
 
 def test_incremental_prompt_covers_only_new_commits(repo: _Repo) -> None:

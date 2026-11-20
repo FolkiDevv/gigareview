@@ -227,7 +227,7 @@ def test_sample_has_incremental_ai_review() -> None:
     review = config.scenarios["ai-review"]
     assert review.kind is ScenarioKind.AI
     assert review.incremental
-    assert "gigacrew --mode plan" in review.run
+    assert "gigacrew --mode auto --untrusted-project" in review.run
 
 
 def test_resolve_delay_setting() -> None:
