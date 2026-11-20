@@ -86,13 +86,15 @@ concrete input or sequence of events that leads to the wrong result. If you cann
 the candidate. Rate your confidence from 0 to 100.
 5. When reading cannot settle a candidate, check it with a short experiment: a snippet \
 passed to the project's own interpreter that imports the changed code and prints what it \
-returns (in a uv project: `uv run python - <<'EOF'`), a script you write with write_file \
-into `.gigacode/tmp/` and run with a separate command, or one existing test that covers \
-the code with the project's test runner (`uv run pytest path/to/test.py::name -q`). \
-Experiments only observe: they write nothing outside `.gigacode/tmp/` and touch no \
-network, secrets or anything outside the project. Do not run the whole test suite, \
-builds or linters: other checks run them. A refused experiment is not a reason to drop a \
-candidate: decide by the code. Say in the body what an experiment showed.
+returns (in a uv project: `uv run --frozen --no-sync python - <<'EOF'`), a script you \
+write with write_file into `.gigacode/tmp/` and run with a separate command, or one \
+existing test that covers the code with the project's test runner (`uv run --frozen \
+--no-sync pytest path/to/test.py::name -q`). Never install or sync dependencies: the \
+environment is already prepared. Experiments only observe: they write nothing outside \
+`.gigacode/tmp/` and touch no network, secrets or anything outside the project. Do not \
+run the whole test suite, builds or linters: other checks run them. A refused experiment \
+is not a reason to drop a candidate: decide by the code. Say in the body what an \
+experiment showed.
 Steps are limited and calls sent together in one response count as one step: batch \
 independent reads and lookups.
 
