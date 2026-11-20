@@ -97,6 +97,8 @@ def test_prompt_starts_review_with_background_explore(repo: _Repo) -> None:
 def test_prompt_allows_experiments_but_not_changes(repo: _Repo) -> None:
     prompt = _prompt(repo)
     assert "HEAD must stay at the commit under review" in prompt
+    # Рецензент gigacrew видит из запроса только начало (~1000 символов) и конец.
+    assert "Short experiments that check a finding are part of this review" in prompt[:1000]
     assert "5. When reading cannot settle a candidate, check it with a short experiment" in prompt
     assert "write nothing outside `.gigacode/tmp/`" in prompt
     assert f"git show {repo.base}:<path>" in prompt
