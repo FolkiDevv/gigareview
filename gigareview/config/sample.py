@@ -66,11 +66,11 @@ kind = "ai"
 incremental = true
 run = """
 prompt=$("$GIGAREVIEW" ai-review prompt) || exit 2
-gigacrew --mode plan --no-save --no-color -p "$prompt"
+gigacrew --mode auto --untrusted-project --no-save --no-color -p "$prompt"
 """
 validate = '"$GIGAREVIEW" ai-review tasks --check'
 format = '"$GIGAREVIEW" ai-review tasks'
-timeout_minutes = 20
+timeout_minutes = 30
 
 [[repos]]
 project = "PROJ"
