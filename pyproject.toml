@@ -44,7 +44,7 @@ gigareview = "gigareview.cli.app:main"
 dev = [
     # Тесты и покрытие (порог — в [tool.coverage.report])
     "pytest>=9.1",
-    "coverage==7.17.3",
+    "coverage==7.17.4",
     "pytest-randomly>=5.0",
     "pytest-timeout>=2.4",
     # Стиль, форматирование, типы, архитектура
